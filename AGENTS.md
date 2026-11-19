@@ -125,3 +125,40 @@ bd prime                # Refresh Beads context
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
+
+<!-- BEGIN PROJECT SECTION (keep identical in CLAUDE.md and AGENTS.md) -->
+## Workflow and tooling
+
+- **Tasks / short-term memory:** `bd` (beads). Start with `bd ready`. Phase 1 milestones are also
+  tracked in the Tonic repo (epic `Tonic-cno`).
+- **Long-term memory and development process:** `mnemoria` (store in `./mnemoria`, committed).
+  Read: `mnemoria search "<topic>"`. Write: `mnemoria add -a <agent> -t decision|discovery|intent --summary "..." "..."`.
+  Process rules live in mnemoria, not in this file.
+- **Code analysis:** `codegraph` (index in `.codegraph/`, not committed). Refresh with `codegraph sync`.
+- **Git:** commit after every significant change and at checkpoints. `origin` is jtatman/tonic2.
+- Keep this section identical in `CLAUDE.md` and `AGENTS.md`.
+
+## Build & Test
+
+Builds run in WSL (g++ 15, cmake 4.x) or on the Mac `osx` over ssh (Apple clang 14, no cmake: compile
+directly). CI covers Linux, Windows (MSVC) and macOS.
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j && ctest --test-dir build --output-on-failure
+build/tonic2_golden --update tests/golden   # only for an intentional change to a reference render
+```
+
+## Architecture Overview
+
+- Design: `docs/phase1-core-design.md` in the Tonic repo (branch `phase1-design`).
+- Layers (bottom up): DSP kernels (`include/tonic/dsp`, M1) -> graph builder / compiled graph (M2) ->
+  engine with sample-accurate events, params, macros (M3) -> patching syntax (M4) -> voices (M5) ->
+  mixer + FX matrix (M6). Plugin formats live in a separate DPF adapter (M7).
+
+## Conventions & Patterns
+
+- Kernels: plain structs with `prepare(sampleRate)`, `reset()`, `process(...)`; no virtuals, no
+  allocation after prepare, no globals, no exceptions. `float` audio, `double` for phase/state.
+- Every kernel gets a behavior test plus a golden render in `tests/renders.hpp`.
+- Golden files must stay bit-stable across compilers; if a change breaks that, find out why first.
+<!-- END PROJECT SECTION -->

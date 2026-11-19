@@ -239,13 +239,14 @@ void testRealtimeSafety() {
     for (int i = 0; !stop.load(); ++i) {
       if (e.setGraph(synthPatch(100.0 + i % 200))) ++swaps;
       e.collectGarbage();
-      std::this_thread::sleep_for(std::chrono::microseconds(200));
+      std::this_thread::yield();
     }
   });
   bool finite = true;
   std::thread audio([&] {
     tl_audio = true;
-    for (int i = 0; i < 20000; ++i) {
+    // Run until enough swaps happened (timer granularity differs per OS), with an upper bound.
+    for (int i = 0; (i < 20000 || swaps.load() < 50) && i < 5000000; ++i) {
       e.process(nullptr, 0, outs, 2, 64 + (i % 4) * 48);
       finite &= std::isfinite(l[0]) && std::isfinite(r[0]);
     }
@@ -255,7 +256,7 @@ void testRealtimeSafety() {
   stop = true;
   control.join();
   e.collectGarbage();
-  check(g_audioAllocs == 0 && finite && swaps > 10, "no allocation during hot swaps",
+  check(g_audioAllocs == 0 && finite && swaps >= 50, "no allocation during hot swaps",
         std::to_string(swaps.load()) + " swaps, " + std::to_string(g_audioAllocs.load()) + " audio allocs");
 
   // Mismatched settings are refused and the current graph keeps running.

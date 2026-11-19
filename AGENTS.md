@@ -156,7 +156,7 @@ build/tonic2_golden --update tests/golden   # only for an intentional change to 
   parameters, macros, note events as per-sample control buffers + offline render/WAV (`include/tonic/render`, M3) ->
   patching syntax over signal nodes (`include/tonic/dsl`, `graph/signal_nodes.hpp`, M4) ->
   voices (`graph/voice_node.hpp`, `Patch::voices`, M5) ->
-  mixer + FX matrix (M6). Plugin formats live in a separate DPF adapter (M7).
+  mixer + FX matrix (`dsl/mixer.hpp`, `graph/mixer_nodes.hpp`, M6). Plugin formats live in a separate DPF adapter (M7).
 
 ## Conventions & Patterns
 

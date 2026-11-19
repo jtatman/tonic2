@@ -68,7 +68,7 @@ class ControlSignalNode final : public Node {
 // Element-wise a (op) b over N channels (mono inputs are broadcast by the graph).
 class BinaryOpNode final : public Node {
  public:
-  enum class Op { Add, Sub, Mul, Div };
+  enum class Op { Add, Sub, Mul, Div, Min, Max };
   BinaryOpNode(Op op, int channels) : Node({channels, channels}, {channels}), op_(op) {}
   void process(const ProcessArgs& a) override {
     for (int c = 0; c < outputChannels()[0]; ++c) {
@@ -80,6 +80,8 @@ class BinaryOpNode final : public Node {
         case Op::Sub: for (int i = 0; i < n; ++i) o[i] = x[i] - y[i]; break;
         case Op::Mul: for (int i = 0; i < n; ++i) o[i] = x[i] * y[i]; break;
         case Op::Div: for (int i = 0; i < n; ++i) o[i] = y[i] != 0.f ? x[i] / y[i] : 0.f; break;
+        case Op::Min: for (int i = 0; i < n; ++i) o[i] = std::min(x[i], y[i]); break;
+        case Op::Max: for (int i = 0; i < n; ++i) o[i] = std::max(x[i], y[i]); break;
       }
     }
   }

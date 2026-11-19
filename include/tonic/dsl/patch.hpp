@@ -220,6 +220,15 @@ class Patch {
   }
   void fail(const std::string& msg) { if (error_.empty()) error_ = msg; }
 
+  // --- advanced: building blocks for Mixer, fxMatrix and custom nodes ---
+  Signal addNode(std::unique_ptr<graph::Node> n, int channels) { return make(std::move(n), channels); }
+  // Another output port of the node behind `s`.
+  Signal port(const Signal& s, int portIndex, int channels) { return own(s) ? Signal(this, s.node_, portIndex, channels) : s; }
+  // Connect `from` into input `portIndex` of the node behind `to` (several connections are summed).
+  void route(const Signal& from, const Signal& to, int portIndex) { if (own(to)) connect(from, to, portIndex); }
+  // A summing point: route any number of signals into it with route(sig, sum, 0).
+  Signal summingPoint(int channels) { return make(std::make_unique<graph::GainNode>(channels, 1.f), channels); }
+
  private:
   struct VoiceTag {};
   explicit Patch(VoiceTag) : isVoice_(true) {}
@@ -278,6 +287,10 @@ inline Signal operator-(float a, Signal b) { return b.patch() ? b.patch()->const
 inline Signal operator*(float a, Signal b) { return b.patch() ? b.patch()->constant(a) * b : b; }
 inline Signal operator/(float a, Signal b) { return b.patch() ? b.patch()->constant(a) / b : b; }
 inline Signal operator-(Signal a) { return a * -1.f; }
+inline Signal min(Signal a, Signal b) { return a.patch() ? a.patch()->binary(graph::BinaryOpNode::Op::Min, a, b) : a; }
+inline Signal max(Signal a, Signal b) { return a.patch() ? a.patch()->binary(graph::BinaryOpNode::Op::Max, a, b) : a; }
+inline Signal min(Signal a, float b) { return a.patch() ? min(a, a.patch()->constant(b)) : a; }
+inline Signal max(Signal a, float b) { return a.patch() ? max(a, a.patch()->constant(b)) : a; }
 
 // ---- effects: describe settings, then apply with `signal >> effect` ----
 struct Ladder {

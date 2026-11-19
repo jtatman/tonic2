@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "tonic/dsl/mixer.hpp"
 #include "tonic/dsl/patch.hpp"
 #include "tonic/engine/events.hpp"
 
@@ -94,8 +95,48 @@ inline void polySynth(dsl::Patch& p) {
   p.output(voices >> dsl::pan(0.f) >> dsl::delay(0.33, 0.35f, 0.25f));
 }
 
+// A small mix: poly pad and mono bass in a "keys" group, a noise hat on its own strip, a delay return
+// fed by pad and hat sends, and a "space" macro that raises the send and lowers the dry pad.
+inline void mixedSong(dsl::Patch& p) {
+  auto space = p.param("space", 0.f, 1.f, 0.2f, 0.1f);
+  auto pad = p.voices({6, dsl::VoiceMode::Poly, 2, 7.f}, [](dsl::Patch& v) {
+    auto env = v.adsr(0.05, 0.5, 0.6, 0.8);
+    v.output(v.saw(v.pitch()) * env * 0.08f >> dsl::lowpass(1500.f, 0.8f));
+  });
+  // Every voice node hears every note (per-channel note routing is a follow-up), so the legato bass
+  // follows the last chord note two octaves down.
+  auto bass = p.voices({1, dsl::VoiceMode::Legato}, [](dsl::Patch& v) {
+    auto env = v.adsr(0.003, 0.15, 0.7, 0.1);
+    v.output(v.square(v.pitch() * 0.25f, 0.4f) * env * 0.25f >> dsl::ladder(350.f + env * 900.f, 0.35f, 1.5));
+  });
+  auto hatEnv = (p.sine(4.f) + 1.f) * 0.5f;  // 8th-note pulse at 120 bpm
+  auto hat = (p.noise(3) >> dsl::highpass(7000.f, 0.9f)) * hatEnv * hatEnv * hatEnv * 0.05f;
+
+  dsl::Mixer mix(p);
+  auto echo = mix.fxReturn([](dsl::Signal in) { return in >> dsl::lowpass(3500.f) >> dsl::delay(0.375, 0.45f, 1.f); });
+  auto keys = mix.group({.gainDb = -1.f});
+  auto padStrip = mix.strip(pad, {.gainDb = 0.f - space * 4.f, .pan = -0.25f}, &keys);
+  mix.strip(bass, {.gainDb = -2.f, .pan = 0.f}, &keys);
+  auto hatStrip = mix.strip(hat, {.gainDb = -3.f, .pan = 0.35f});
+  mix.send(padStrip, echo, space * 0.6f);
+  mix.send(hatStrip, echo, 0.2f);
+  p.output(mix.master({.gainDb = -1.f}));
+}
+
 inline std::vector<Demo> all() {
   return {
+      {"mixed", mixedSong,
+       [](double sr) {
+         std::vector<Event> ev;
+         const int chords[4][3] = {{57, 60, 64}, {53, 57, 60}, {55, 59, 62}, {52, 55, 59}};
+         const int bar = static_cast<int>(sr * 1.0);
+         for (int c = 0; c < 4; ++c) {
+           for (int n : chords[c]) { ev.push_back(Event::noteOn(c * bar, n, 0.7f)); ev.push_back(Event::noteOff(c * bar + bar - 2000, n)); }
+         }
+         ev.push_back(Event::param(2 * bar, 0, 0.9f));
+         return ev;
+       },
+       5.0},
       {"poly", polySynth,
        [](double sr) {
          std::vector<Event> ev;

@@ -12,7 +12,7 @@ p.output(osc * env * 0.35f >> dsl::ladder(cutoff + env * 2500.f, 0.3f) >> dsl::p
 auto c = p.compile(48000, 512);   // c.graph, c.layout, c.error
 ```
 
-**Status: M5 (voices).** Mixer/FX matrix and the plugin adapter come in later milestones; see the [design document](https://github.com/jtatman/Tonic/blob/phase1-design/docs/phase1-core-design.md).
+**Status: M6 (mixer + FX matrix).** The DPF plugin adapter (M7) is next; see the [design document](https://github.com/jtatman/Tonic/blob/phase1-design/docs/phase1-core-design.md).
 
 ## DSP kernels (`include/tonic/dsp/`, header-only)
 
@@ -122,3 +122,24 @@ p.output(synth >> dsl::pan(0.f) >> dsl::delay(0.33, 0.35f, 0.25f));   // shared 
   an error. The build function runs once per voice immediately, so it may capture locals by reference.
 - Benchmark (`voice_tests`): a 16-voice saw+square+ladder synth runs at ~55x realtime on one core
   (WSL, recent x86) and ~37x on a 2019-era Intel Mac.
+
+## Mixer and FX matrix (M6, `include/tonic/dsl/mixer.hpp`)
+
+```cpp
+dsl::Mixer mix(p);
+auto echo = mix.fxReturn([](dsl::Signal in) { return in >> dsl::delay(0.375, 0.45f, 1.f); });
+auto keys = mix.group({.gainDb = -1.f});
+auto pad  = mix.strip(padSig,  {.gainDb = -3.f, .pan = -0.25f}, &keys);
+auto lead = mix.strip(leadSig, {.gainDb = leadGain, .solo = leadSolo});
+mix.send(pad, echo, space * 0.6f);              // post-fader; pass true for pre-fader
+p.output(mix.master({.gainDb = -1.f}));
+float peak = lead.meter->readAndReset();         // any thread
+```
+
+- Strips: gain (dB), pan with constant-power (-3 dB), linear (-6 dB) or compromise (-4.5 dB) law
+  (stereo inputs use balance), mute with a 5 ms fade, solo, peak meter, pre/post-fader sends.
+- Groups sum strips and are soloable; FX returns are solo-safe; the master has its own strip and meter.
+- `dsl::fxMatrix(in, slots, routes)`: effect slots wired by a feed-forward routing matrix
+  (`{kFxIn, 0}, {0, 1}, {1, kFxOut}` = serial; several routes to one slot are summed). Any route gain can
+  be a parameter, so serial/parallel morphs crossfade without clicks. Backward routes are rejected.
+- Every setting is a Value, so parameters, macros and modulation all work.

@@ -97,6 +97,11 @@ class Patch {
     static_cast<Signal&>(p) = make(std::make_unique<graph::ParamSignalNode>(p.id, def), 1);
     return p;
   }
+  // Bind MIDI CC `cc` to a parameter (often a macro): CC 0..127 sweeps the parameter's range.
+  void midiCc(int cc, const Param& target) {
+    if (isVoice_) { fail("declare MIDI CC bindings on the outer patch"); return; }
+    layout_.ccBindings.push_back({cc, target.id});
+  }
   void macro(const Param& m, std::vector<MacroTarget> targets) {
     if (isVoice_) { fail("declare macros on the outer patch"); return; }
     engine::MacroSpec spec{m.id, {}};

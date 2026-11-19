@@ -175,3 +175,17 @@ checks the output level. It accepts `-Plugin` for any other VST3.
 - New plugin = a `DistrhoPluginInfo.h` + a one-line `createPlugin()` passing a patch build function.
 - No custom UI yet (hosts show generic controls). CI builds all three formats on Linux, Windows and
   macOS, runs the CLAP host test, and uploads the plugins as artifacts.
+
+## MIDI CC, MIDI learn and automation timing
+
+```cpp
+p.midiCc(74, brightness);        // patch-level binding: CC 0..127 sweeps the parameter's range
+engine.mapCc(1, cutoff.id);      // control thread, any time
+engine.learnCc(macro.id);        // MIDI learn: the next CC that arrives is bound to `macro`
+```
+
+- One parameter per CC; bind a macro to move several parameters from one knob.
+- CC events are sample-accurate (engine events with frame offsets; the plugin adapter forwards them).
+- Host automation through DPF is block-accurate: DPF applies parameter changes at the start of the
+  host block, and the engine smooths them. `tonic2_probe` (a test plugin whose output equals its parameter)
+  checks both behaviours in the CLAP host test.

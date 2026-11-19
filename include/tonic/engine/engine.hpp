@@ -8,12 +8,16 @@
 // hands the old graph to a lock-free retire queue, freed by collectGarbage(). setParam() goes through
 // per-parameter atomics. The audio thread never allocates, frees, locks, or throws.
 //
+// MIDI CC: CC events map onto parameters via a 128-entry table (Layout::ccBindings, mapCc(), learnCc()),
+// sample-accurately like parameter events.
+//
 // Timing: events carry a frame offset inside the process() call and take effect exactly on that frame.
 // Nodes read per-sample parameter, gate, trigger, pitch and velocity buffers, so the graph itself does
 // not need to be split at event boundaries. Events must be sorted by frame.
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -76,6 +80,11 @@ class Engine {
           macroTargets_.push_back(t.param);
     }
     std::erase_if(layout_.macros, [&](const MacroSpec& m) { return m.param < 0 || m.param >= static_cast<int>(n); });
+    // MIDI CC table: one parameter per CC number (bind a macro to drive several parameters).
+    for (auto& c : ccMap_) c.store(-1, std::memory_order_relaxed);
+    for (const CcBinding& b : layout_.ccBindings)
+      if (b.cc >= 0 && b.cc < 128 && b.param >= 0 && b.param < static_cast<int>(n)) ccMap_[static_cast<size_t>(b.cc)].store(b.param);
+    learnParam_.store(-1);
     for (auto* v : {&gate_, &trigger_, &pitch_, &velocity_}) v->assign(static_cast<size_t>(maxBlock), 0.f);
     noteCount_ = 0;
     pendingTrigger_ = false;
@@ -106,6 +115,20 @@ class Engine {
     uiValue_[static_cast<size_t>(id)].store(std::clamp(value, s.min, s.max), std::memory_order_relaxed);
     uiVersion_[static_cast<size_t>(id)].fetch_add(1, std::memory_order_release);
   }
+  // Control thread: bind MIDI CC `cc` (0..127) to parameter `id` (-1 unbinds). Takes effect immediately.
+  void mapCc(int cc, int id) {
+    if (cc < 0 || cc >= 128) return;
+    ccMap_[static_cast<size_t>(cc)].store(id >= 0 && id < static_cast<int>(layout_.params.size()) ? id : -1,
+                                          std::memory_order_relaxed);
+  }
+  // Control thread: MIDI learn. The next CC that arrives is bound to parameter `id` (-1 cancels).
+  void learnCc(int id) { learnParam_.store(id, std::memory_order_relaxed); }
+  bool isLearning() const { return learnParam_.load(std::memory_order_relaxed) >= 0; }
+  // Any thread: parameter bound to `cc`, or -1.
+  int ccMapping(int cc) const {
+    return cc >= 0 && cc < 128 ? ccMap_[static_cast<size_t>(cc)].load(std::memory_order_relaxed) : -1;
+  }
+
   // Any thread. Last value the audio thread produced (after smoothing and macros).
   float paramValue(int id) const {
     if (id < 0 || id >= static_cast<int>(layout_.params.size())) return 0.f;
@@ -191,6 +214,20 @@ class Engine {
         break;
       case Event::Type::Expression:  // per-note expressions are handled by voice nodes
         break;
+      case Event::Type::ControlChange: {
+        if (ev.key < 0 || ev.key >= 128) break;
+        const int learn = learnParam_.load(std::memory_order_relaxed);
+        if (learn >= 0) {  // MIDI learn: this CC now drives the parameter being learned
+          ccMap_[static_cast<size_t>(ev.key)].store(learn, std::memory_order_relaxed);
+          learnParam_.store(-1, std::memory_order_relaxed);
+        }
+        const int id = ccMap_[static_cast<size_t>(ev.key)].load(std::memory_order_relaxed);
+        if (id < 0 || id >= static_cast<int>(base_.size())) break;
+        const ParamSpec& s = layout_.params[static_cast<size_t>(id)];
+        base_[static_cast<size_t>(id)] = s.min + std::clamp(ev.value, 0.f, 1.f) * (s.max - s.min);
+        smoothers_[static_cast<size_t>(id)].setTarget(base_[static_cast<size_t>(id)]);
+        break;
+      }
     }
   }
   void removeNote(int key) {
@@ -235,6 +272,8 @@ class Engine {
   std::unique_ptr<std::atomic<uint32_t>[]> uiVersion_;
   std::vector<uint32_t> seenVersion_;
   std::vector<int> macroTargets_;
+  std::array<std::atomic<int>, 128> ccMap_{};
+  std::atomic<int> learnParam_{-1};
   std::vector<float> gate_, trigger_, pitch_, velocity_;
   graph::ControlBuffers control_;
   int notes_[kMaxNotes] = {};

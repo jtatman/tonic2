@@ -28,9 +28,17 @@ struct MacroSpec {
   std::vector<MacroTarget> targets;
 };
 
+// A MIDI CC bound to a parameter: CC 0..127 maps linearly onto the parameter's min..max (bind a macro to
+// drive several parameters from one knob).
+struct CcBinding {
+  int cc = 0;
+  int param = 0;
+};
+
 struct Layout {
   std::vector<ParamSpec> params;
   std::vector<MacroSpec> macros;
+  std::vector<CcBinding> ccBindings;  // initial bindings; MIDI learn and mapCc() can change them at runtime
   int add(ParamSpec p) { params.push_back(std::move(p)); return static_cast<int>(params.size()) - 1; }
 };
 

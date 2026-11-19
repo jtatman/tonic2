@@ -59,6 +59,58 @@ clap_event_note_t note(uint16_t type, uint32_t time, int16_t key, double velocit
   return e;
 }
 
+// Probe plugin: output == "level". Checks where a MIDI CC (sample-accurate) and a parameter automation
+// event (block-accurate under DPF) take effect.
+void runProbe(const clap_plugin_t* plugin, const clap_param_info_t& level) {
+  constexpr uint32_t block = 256;
+  std::vector<float> l(block), r(block);
+  float* chans[2] = {l.data(), r.data()};
+  clap_audio_buffer_t audioOut{};
+  audioOut.data32 = chans;
+  audioOut.channel_count = 2;
+  std::vector<float> out;
+  for (int b = 0; b < 6; ++b) {
+    EventList list;
+    clap_event_midi_t midi{};
+    clap_event_param_value_t pv{};
+    if (b == 2) {  // CC 1 = 127 at frame 100
+      midi.header = {sizeof(midi), 100, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_MIDI, 0};
+      midi.port_index = 0;
+      midi.data[0] = 0xB0;
+      midi.data[1] = 1;
+      midi.data[2] = 127;
+      list.events.push_back(&midi.header);
+    }
+    if (b == 4) {  // automation to 0.25 at frame 50
+      pv.header = {sizeof(pv), 50, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0};
+      pv.param_id = level.id;
+      pv.note_id = -1;
+      pv.port_index = -1;
+      pv.channel = -1;
+      pv.key = -1;
+      pv.value = 0.25;
+      list.events.push_back(&pv.header);
+    }
+    clap_input_events_t in{&list, EventList::size, EventList::get};
+    clap_output_events_t outEv{nullptr, tryPush};
+    clap_process_t proc{};
+    proc.steady_time = static_cast<int64_t>(b) * block;
+    proc.frames_count = block;
+    proc.audio_outputs = &audioOut;
+    proc.audio_outputs_count = 1;
+    proc.in_events = &in;
+    proc.out_events = &outEv;
+    plugin->process(plugin, &proc);
+    out.insert(out.end(), l.begin(), l.end());
+  }
+  const size_t cc = 2 * block + 100, au = 4 * block;
+  check(out[cc - 1] == 0.f && out[cc] == 1.f, "MIDI CC lands on its exact frame (sample-accurate)",
+        std::to_string(out[cc - 1]) + " -> " + std::to_string(out[cc]));
+  check(out[au - 1] == 1.f && out[au] == 0.25f && out[au + 49] == 0.25f,
+        "automation applies from the start of its host block (DPF: block-accurate)",
+        std::to_string(out[au - 1]) + " -> " + std::to_string(out[au]));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -80,7 +132,8 @@ int main(int argc, char** argv) {
   check(count == 1, "factory has one plugin", std::to_string(count));
   if (count != 1) return 1;
   const clap_plugin_descriptor_t* desc = factory->get_plugin_descriptor(factory, 0);
-  check(std::string(desc->id) == "io.github.jtatman.tonic2.poly", "descriptor id", desc->id);
+  const bool probe = std::string(desc->id) == "io.github.jtatman.tonic2.probe";
+  check(probe || std::string(desc->id) == "io.github.jtatman.tonic2.poly", "descriptor id", desc->id);
 
   clap_host_t host{CLAP_VERSION, nullptr, "tonic2 test host", "tonic2", "", "0.1",
                    hostGetExtension, hostNoop, hostNoop, hostNoop};
@@ -94,7 +147,26 @@ int main(int argc, char** argv) {
   bool haveCutoff = false;
   for (uint32_t i = 0; i < nParams; ++i) {
     clap_param_info_t info{};
-    if (params->get_info(plugin, i, &info) && std::string(info.name) == "cutoff") { cutoff = info; haveCutoff = true; }
+    if (params->get_info(plugin, i, &info) && std::string(info.name) == (probe ? "level" : "cutoff")) {
+      cutoff = info;
+      haveCutoff = true;
+    }
+  }
+  if (probe) {
+    check(haveCutoff, "probe: parameter 'level' exposed", std::to_string(nParams) + " param(s)");
+    check(plugin->activate(plugin, 48000.0, 1, 256) && plugin->start_processing(plugin), "activate + start", "48 kHz");
+    runProbe(plugin, cutoff);
+    plugin->stop_processing(plugin);
+    plugin->deactivate(plugin);
+    plugin->destroy(plugin);
+    entry->deinit();
+#if defined(_WIN32)
+    FreeLibrary(lib);
+#else
+    dlclose(lib);
+#endif
+    std::printf("\n%d failure(s)\n", failures);
+    return failures == 0 ? 0 : 1;
   }
   check(haveCutoff && cutoff.min_value == 100.0 && cutoff.max_value == 8000.0 && cutoff.default_value == 900.0,
         "parameter 'cutoff' exposed with range and default", std::to_string(nParams) + " param(s)");

@@ -31,6 +31,7 @@ inline void monoSynth(dsl::Patch& p) {
   auto resonance = p.param("resonance", 0.f, 1.f, 0.3f, 0.03f);
   auto bright = p.param("brightness", 0.f, 1.f, 0.f, 0.05f);
   p.macro(bright, {{cutoff, 0.f, 3000.f, 2.f}, {resonance, 0.f, 0.4f, 1.f}});
+  p.midiCc(74, bright);  // brightness macro on CC 74 (the usual "cutoff" knob)
   auto env = p.adsr(0.005, 0.25, 0.4, 0.3);
   auto osc = p.saw(p.pitch()) + p.square(p.pitch() * 0.5f, 0.3f) * 0.6f;
   p.output(osc * env * 0.35f >> dsl::ladder(cutoff + env * 2500.f, resonance, 1.5) >> dsl::pan(0.f));
@@ -87,6 +88,7 @@ inline void filteredNoise(dsl::Patch& p) {
 // stereo delay on the summed voices.
 inline void polySynth(dsl::Patch& p) {
   auto cutoff = p.param("cutoff", 100.f, 8000.f, 900.f, 0.05f);
+  p.midiCc(74, cutoff);
   auto voices = p.voices({8, dsl::VoiceMode::Poly, 2, 9.f}, [&](dsl::Patch& v) {
     auto env = v.adsr(0.01, 0.4, 0.5, 0.6);
     auto osc = v.saw(v.pitch()) * 0.5f + v.triangle(v.pitch() * 2.f) * 0.2f;

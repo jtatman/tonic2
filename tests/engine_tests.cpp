@@ -127,6 +127,35 @@ void testNotes() {
   check(zg[99] == 1.f && zg[100] == 0.f, "note-on with velocity 0 acts as note-off", "ok");
 }
 
+void testMidiCc() {
+  engine::Layout L;
+  const int cut = L.add({"cutoff", 100.f, 1100.f, 100.f, 0.f});
+  const int m = L.add({"macro", 0.f, 1.f, 0.f, 0.f});
+  const int res = L.add({"res", 0.f, 1.f, 0.f, 0.f});
+  L.macros.push_back({m, {{res, 0.f, 0.8f, 1.f}}});
+  L.ccBindings.push_back({74, cut});
+  engine::Engine e;
+  e.prepare(kSr, kMax, L);
+  e.setGraph(probe(ProbeNode::What::Param, cut));
+  auto out = run(e, 600, {Event::cc(300, 74, 0.5f, 0)});
+  check(out[299] == 100.f && out[300] == 600.f, "bound CC maps 0..1 onto the parameter range on its exact frame",
+        fmt(out[299]) + " -> " + fmt(out[300]));
+  auto unbound = run(e, 200, {Event::cc(10, 20, 1.f)});
+  check(unbound[150] == 600.f && e.ccMapping(20) == -1, "unbound CC is ignored", fmt(unbound[150]));
+
+  e.mapCc(20, cut);
+  auto remapped = run(e, 200, {Event::cc(10, 20, 1.f)});
+  check(remapped[150] == 1100.f, "mapCc rebinds at runtime", fmt(remapped[150]));
+
+  e.learnCc(m);  // MIDI learn: the next CC that arrives (CC 7) gets bound to the macro
+  check(e.isLearning(), "learn mode armed", "ok");
+  e.setGraph(probe(ProbeNode::What::Param, res));
+  auto learned = run(e, 300, {Event::cc(100, 7, 0.5f)});
+  e.collectGarbage();
+  check(!e.isLearning() && e.ccMapping(7) == m && learned[99] == 0.f && std::fabs(learned[100] - 0.4f) < 1e-6f,
+        "MIDI learn binds the next CC; CC drives a macro and its targets", fmt(learned[100]));
+}
+
 void testParamsSurviveGraphSwap() {
   engine::Layout L;
   const int p = L.add({"p", 0.f, 1.f, 0.f, 0.f});
@@ -209,6 +238,7 @@ int main() {
   testSmoothingAndUi();
   testMacros();
   testNotes();
+  testMidiCc();
   testParamsSurviveGraphSwap();
   testHostBlockIndependence();
   testWavRoundTrip();

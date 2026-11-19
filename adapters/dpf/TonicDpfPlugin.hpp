@@ -5,8 +5,10 @@
 //   kept, so voices() nodes with VoiceConfig::channel play only their channel.
 // - The patch is compiled in activate() (control thread) at the host's sample rate; the audio thread
 //   only calls Engine::process, which never allocates, locks or throws.
-// Host parameter changes arrive through setParameterValue() and go through Engine::setParam (atomics,
-// smoothed, applied at the next block). Sample-accurate automation is a follow-up.
+// - MIDI CC is forwarded as sample-accurate engine CC events (mapped by Layout::ccBindings / MIDI learn).
+// - Host automation arrives through setParameterValue() -> Engine::setParam (atomics, smoothed). DPF applies
+//   parameter changes at the start of the host block (it does not split blocks at automation points), so
+//   automation is block-accurate; MIDI CC stays sample-accurate.
 #pragma once
 
 #include <cctype>
@@ -90,6 +92,7 @@ class TonicDpfPlugin : public Plugin {
       const int frame = static_cast<int>(m.frame), channel = m.data[0] & 0x0F;
       if (status == 0x90 && vel > 0) events_.push_back(tonic::engine::Event::noteOn(frame, note, vel / 127.f, channel));
       else if (status == 0x80 || (status == 0x90 && vel == 0)) events_.push_back(tonic::engine::Event::noteOff(frame, note, channel));
+      else if (status == 0xB0) events_.push_back(tonic::engine::Event::cc(frame, note, vel / 127.f, channel));  // data1 = CC number
     }
     engine_.process(nullptr, 0, outputs, DISTRHO_PLUGIN_NUM_OUTPUTS, static_cast<int>(frames), events_.data(),
                     static_cast<int>(events_.size()));

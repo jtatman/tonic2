@@ -7,14 +7,30 @@
 
 namespace tonic::graph {
 
+// Per-sample control signals computed by the engine for the current block (sample-accurate).
+// Any pointer may be null when the engine has nothing to supply (e.g. a graph rendered directly).
+struct ControlBuffers {
+  const float* const* params = nullptr;  // params[id][frame], smoothed, macros applied
+  int numParams = 0;
+  const float* gate = nullptr;     // 1 while a note is held (mono, last-note priority until M5 voices)
+  const float* trigger = nullptr;  // 1 on the frame a note starts
+  const float* pitchHz = nullptr;  // frequency of the current note
+  const float* velocity = nullptr; // velocity of the current note
+};
+
 // Buffers for one process call. input(port, ch) / output(port, ch) point at numFrames samples.
 // Inputs are read-only and may alias each other (fan-out, mono broadcast); outputs never alias inputs.
 struct ProcessArgs {
   int numFrames = 0;
   const float* const* const* inputs = nullptr;
   float* const* const* outputs = nullptr;
+  const ControlBuffers* control = nullptr;
   const float* input(int port, int ch) const { return inputs[port][ch]; }
   float* output(int port, int ch) const { return outputs[port][ch]; }
+  // Per-sample values of a parameter, or null if unavailable.
+  const float* param(int id) const {
+    return control && id >= 0 && id < control->numParams ? control->params[id] : nullptr;
+  }
 };
 
 class Node {

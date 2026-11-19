@@ -54,7 +54,7 @@ class CompiledGraph {
   // Audio thread. numFrames <= maxBlock(). External channel pointers are read at `offset`;
   // output channels are written at `outOffset`. A mono graph output feeds every output channel.
   void process(int numFrames, const float* const* in, int numIn, int inOffset, float* const* out, int numOut,
-               int outOffset) {
+               int outOffset, const ControlBuffers* control = nullptr) {
     for (size_t i = 0; i < inputs_.size(); ++i) inputs_[i]->bind(in, numIn, inputFirst_[i], inOffset);
     for (Step& s : steps_) {
       for (Mix& m : s.mixes) {
@@ -66,6 +66,7 @@ class CompiledGraph {
       a.numFrames = numFrames;
       a.inputs = s.inPorts.data();
       a.outputs = s.outPorts.data();
+      a.control = control;
       s.node->process(a);
     }
     const int gch = numOutputChannels();

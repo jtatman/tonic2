@@ -32,6 +32,15 @@ if(TONIC2_BUILD_TESTS)
   target_compile_options(tonic2_graph_tests PRIVATE ${TONIC2_WARN})
   add_test(NAME graph_tests COMMAND tonic2_graph_tests)
 
+  add_executable(tonic2_engine_tests tests/engine_tests.cpp)
+  target_link_libraries(tonic2_engine_tests PRIVATE tonic2)
+  target_compile_options(tonic2_engine_tests PRIVATE ${TONIC2_WARN})
+  add_test(NAME engine_tests COMMAND tonic2_engine_tests)
+
+  add_executable(tonic2_render tools/render.cpp)
+  target_link_libraries(tonic2_render PRIVATE tonic2)
+  target_compile_options(tonic2_render PRIVATE ${TONIC2_WARN})
+
   add_executable(tonic2_golden tools/golden.cpp)
   target_link_libraries(tonic2_golden PRIVATE tonic2)
 endif()

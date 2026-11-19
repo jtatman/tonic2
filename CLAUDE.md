@@ -86,7 +86,7 @@ build/tonic2_golden --update tests/golden   # only for an intentional change to 
 - Design: `docs/phase1-core-design.md` in the Tonic repo (branch `phase1-design`).
 - Layers (bottom up): DSP kernels (`include/tonic/dsp`, M1) -> graph builder / compiled graph
   (`include/tonic/graph`, M2) and engine with lock-free graph swap (`include/tonic/engine`, M2) ->
-  engine with sample-accurate events, params, macros (M3) -> patching syntax (M4) -> voices (M5) ->
+  parameters, macros, note events as per-sample control buffers + offline render/WAV (`include/tonic/render`, M3) -> patching syntax (M4) -> voices (M5) ->
   mixer + FX matrix (M6). Plugin formats live in a separate DPF adapter (M7).
 
 ## Conventions & Patterns

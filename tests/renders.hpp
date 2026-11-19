@@ -71,7 +71,9 @@ inline std::vector<float> adsr() {
   return out;
 }
 
-struct Named { std::string name; std::function<std::vector<float>()> fn; };
+// shiftTolerant: threshold-driven stage changes may land one sample earlier/later across math
+// libraries (last-bit exp/log differences), so each sample may match its neighbour in the reference.
+struct Named { std::string name; std::function<std::vector<float>()> fn; bool shiftTolerant = false; };
 
 inline std::vector<Named> all() {
   return {
@@ -81,7 +83,7 @@ inline std::vector<Named> all() {
       {"osc_sine_440", [] { return oscillator(Waveform::Sine, 440.0); }},
       {"svf_lp_sweep_q4", svfSweep},
       {"ladder_resonant_saw", ladderResonant},
-      {"adsr_basic", adsr},
+      {"adsr_basic", adsr, true},
   };
 }
 

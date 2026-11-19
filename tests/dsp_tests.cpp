@@ -205,7 +205,14 @@ void testGolden() {
     const auto out = r.fn();
     double maxDiff = got == ref.size() ? 0 : 1e9;
     for (size_t i = 0; i < out.size() && got == ref.size(); ++i)
-      maxDiff = std::max(maxDiff, double(std::fabs(out[i] - ref[i])));
+      {
+        double d = std::fabs(out[i] - ref[i]);
+        if (r.shiftTolerant) {
+          if (i > 0) d = std::min(d, double(std::fabs(out[i] - ref[i - 1])));
+          if (i + 1 < ref.size()) d = std::min(d, double(std::fabs(out[i] - ref[i + 1])));
+        }
+        maxDiff = std::max(maxDiff, d);
+      }
     check(maxDiff < 1e-4, "golden " + r.name, "max diff=" + fmt(maxDiff));
   }
 }

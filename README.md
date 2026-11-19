@@ -12,7 +12,8 @@ p.output(osc * env * 0.35f >> dsl::ladder(cutoff + env * 2500.f, 0.3f) >> dsl::p
 auto c = p.compile(48000, 512);   // c.graph, c.layout, c.error
 ```
 
-**Status: M6 (mixer + FX matrix).** The DPF plugin adapter (M7) is next; see the [design document](https://github.com/jtatman/Tonic/blob/phase1-design/docs/phase1-core-design.md).
+**Status: M7 (plugins).** Phase 1 complete: DSP, graph, engine, params/macros, patching syntax, voices,
+mixer, and a DPF plugin adapter; see the [design document](https://github.com/jtatman/Tonic/blob/phase1-design/docs/phase1-core-design.md).
 
 ## DSP kernels (`include/tonic/dsp/`, header-only)
 
@@ -143,3 +144,21 @@ float peak = lead.meter->readAndReset();         // any thread
   (`{kFxIn, 0}, {0, 1}, {1, kFxOut}` = serial; several routes to one slot are summed). Any route gain can
   be a parameter, so serial/parallel morphs crossfade without clicks. Backward routes are rejected.
 - Every setting is a Value, so parameters, macros and modulation all work.
+
+## Plugins (M7, `adapters/dpf/`)
+
+Any patch becomes a VST3 / CLAP / LV2 plugin through [DPF](https://github.com/DISTRHO/DPF) (ISC license,
+no Steinberg SDK needed). The example plugin wraps the poly demo:
+
+```bash
+git submodule update --init third_party/DPF
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTONIC2_BUILD_DPF=ON
+cmake --build build -j          # build/bin/tonic2_poly.{vst3,clap,lv2}
+ctest --test-dir build          # includes a minimal CLAP host that loads the plugin and renders a chord
+```
+
+- `TonicDpfPlugin` (generic): engine parameters become host parameters; MIDI notes become
+  sample-accurate engine events; the patch is compiled in `activate()` at the host sample rate.
+- New plugin = a `DistrhoPluginInfo.h` + a one-line `createPlugin()` passing a patch build function.
+- No custom UI yet (hosts show generic controls). CI builds all three formats on Linux, Windows and
+  macOS, runs the CLAP host test, and uploads the plugins as artifacts.

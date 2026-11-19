@@ -13,11 +13,16 @@ struct Event {
   int key = 0;        // MIDI note (NoteOn/NoteOff/Expression) or parameter id (Param)
   float value = 0.f;  // velocity 0..1 (NoteOn), plain parameter value (Param), or expression value
   Expr expr = Expr::PitchBend;  // Expression only: bend in semitones, pressure and timbre 0..1
+  int channel = -1;   // MIDI channel 0..15, or -1 = unspecified (reaches every voice node)
 
-  static Event noteOn(int frame, int note, float velocity = 1.f) { return {Type::NoteOn, frame, note, velocity}; }
-  static Event noteOff(int frame, int note) { return {Type::NoteOff, frame, note, 0.f}; }
-  static Event param(int frame, int id, float value) { return {Type::Param, frame, id, value}; }
-  static Event expression(int frame, int note, Expr e, float value) { return {Type::Expression, frame, note, value, e}; }
+  static Event noteOn(int frame, int note, float velocity = 1.f, int channel = -1) {
+    return {Type::NoteOn, frame, note, velocity, Expr::PitchBend, channel};
+  }
+  static Event noteOff(int frame, int note, int channel = -1) { return {Type::NoteOff, frame, note, 0.f, Expr::PitchBend, channel}; }
+  static Event param(int frame, int id, float value) { return {Type::Param, frame, id, value, Expr::PitchBend, -1}; }
+  static Event expression(int frame, int note, Expr e, float value, int channel = -1) {
+    return {Type::Expression, frame, note, value, e, channel};
+  }
 };
 
 }  // namespace tonic::engine

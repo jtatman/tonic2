@@ -143,6 +143,34 @@ void testSharedParamsAndDsl() {
   check(!r.graph && r.error.find("outer patch") != std::string::npos, "param declared inside a voice rejected", r.error);
 }
 
+void testRouting() {
+  auto render2 = [](graph::VoiceConfig a, graph::VoiceConfig b, std::vector<Event> ev) {
+    dsl::Patch p;
+    auto na = p.voices(a, [](dsl::Patch& v) { v.output(v.pitch() * v.gate()); });
+    auto nb = p.voices(b, [](dsl::Patch& v) { v.output(v.pitch() * v.gate()); });
+    p.output(na + nb * 10.f);  // tell the two nodes apart
+    auto c = p.compile(kSr, kMax);
+    engine::Engine e;
+    e.prepare(kSr, kMax, c.layout);
+    e.setGraph(std::move(c.graph));
+    return run(e, 400, ev);
+  };
+  graph::VoiceConfig ch0{2, graph::VoiceMode::Poly, 1, 0.f, 0}, ch1{2, graph::VoiceMode::Poly, 1, 0.f, 1};
+  auto byChannel = render2(ch0, ch1, {Event::noteOn(0, 60, 1.f, 0), Event::noteOn(0, 64, 1.f, 1)});
+  check(std::fabs(byChannel[200] - (hz(60) + 10.f * hz(64))) < 0.05f, "channel routing: each node plays its channel",
+        fmt(byChannel[200]));
+  auto omni = render2(ch0, ch1, {Event::noteOn(0, 67)});
+  check(std::fabs(omni[200] - 11.f * hz(67)) < 0.05f, "notes without a channel reach every node", fmt(omni[200]));
+  auto wrong = render2(ch0, ch1, {Event::noteOn(0, 60, 1.f, 5)});
+  check(wrong[200] == 0.f, "notes on other channels are ignored", fmt(wrong[200]));
+  graph::VoiceConfig low{2}, high{2};
+  low.highKey = 59;
+  high.lowKey = 60;
+  auto split = render2(low, high, {Event::noteOn(0, 48), Event::noteOn(0, 72), Event::noteOff(200, 48)});
+  check(std::fabs(split[100] - (hz(48) + 10.f * hz(72))) < 0.05f && std::fabs(split[300] - 10.f * hz(72)) < 0.05f,
+        "key split: low and high nodes", fmt(split[100]) + " -> " + fmt(split[300]));
+}
+
 void synthVoice(dsl::Patch& v) {
   auto env = v.adsr(0.005, 0.2, 0.5, 0.2);
   auto osc = v.saw(v.pitch()) + v.square(v.pitch() * 0.5f) * 0.5f;
@@ -208,6 +236,7 @@ int main() {
   testUnison();
   testExpressions();
   testSharedParamsAndDsl();
+  testRouting();
   testPolyEqualsSumOfVoices();
   testNoAllocationsAndBenchmark();
   std::printf("\n%d failure(s)\n", failures);

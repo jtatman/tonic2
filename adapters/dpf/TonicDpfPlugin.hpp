@@ -1,7 +1,8 @@
 // Generic DPF adapter: turns any dsl::Patch build function into a VST3 / CLAP / LV2 plugin.
 //
 // - Engine parameters (the patch's Layout) become host parameters, in declaration order.
-// - MIDI note on/off becomes sample-accurate engine events (frame = MIDI event frame).
+// - MIDI note on/off becomes sample-accurate engine events (frame = MIDI event frame). The MIDI channel is
+//   kept, so voices() nodes with VoiceConfig::channel play only their channel.
 // - The patch is compiled in activate() (control thread) at the host's sample rate; the audio thread
 //   only calls Engine::process, which never allocates, locks or throws.
 // Host parameter changes arrive through setParameterValue() and go through Engine::setParam (atomics,
@@ -86,9 +87,9 @@ class TonicDpfPlugin : public Plugin {
       const MidiEvent& m = midi[i];
       if (m.size < 3) continue;
       const uint8_t status = m.data[0] & 0xF0, note = m.data[1] & 0x7F, vel = m.data[2] & 0x7F;
-      const int frame = static_cast<int>(m.frame);
-      if (status == 0x90 && vel > 0) events_.push_back(tonic::engine::Event::noteOn(frame, note, vel / 127.f));
-      else if (status == 0x80 || (status == 0x90 && vel == 0)) events_.push_back(tonic::engine::Event::noteOff(frame, note));
+      const int frame = static_cast<int>(m.frame), channel = m.data[0] & 0x0F;
+      if (status == 0x90 && vel > 0) events_.push_back(tonic::engine::Event::noteOn(frame, note, vel / 127.f, channel));
+      else if (status == 0x80 || (status == 0x90 && vel == 0)) events_.push_back(tonic::engine::Event::noteOff(frame, note, channel));
     }
     engine_.process(nullptr, 0, outputs, DISTRHO_PLUGIN_NUM_OUTPUTS, static_cast<int>(frames), events_.data(),
                     static_cast<int>(events_.size()));

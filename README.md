@@ -119,6 +119,9 @@ p.output(synth >> dsl::pan(0.f) >> dsl::delay(0.33, 0.35f, 0.25f));   // shared 
   silent (below -100 dBFS for a block) and cost nothing while free.
 - Per-voice signals: `pitch`, `gate`, `trigger`, `velocity`, and per-note expressions `pressure`,
   `timbre` and pitch bend (`Event::expression`, as in CLAP note expressions / MPE).
+- Routing: `VoiceConfig::channel` (MIDI channel 0..15, -1 = any) and `lowKey`/`highKey` let several voice
+  nodes in one patch play different parts or a keyboard split; events without a channel reach every node.
+  The DPF adapter keeps the MIDI channel of incoming notes.
 - Outer parameters are read inside a voice with `v.use(param)`; declaring parameters inside a voice is
   an error. The build function runs once per voice immediately, so it may capture locals by reference.
 - Benchmark (`voice_tests`): a 16-voice saw+square+ladder synth runs at ~55x realtime on one core

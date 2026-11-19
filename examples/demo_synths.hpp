@@ -99,15 +99,14 @@ inline void polySynth(dsl::Patch& p) {
 // fed by pad and hat sends, and a "space" macro that raises the send and lowers the dry pad.
 inline void mixedSong(dsl::Patch& p) {
   auto space = p.param("space", 0.f, 1.f, 0.2f, 0.1f);
-  auto pad = p.voices({6, dsl::VoiceMode::Poly, 2, 7.f}, [](dsl::Patch& v) {
+  auto pad = p.voices({6, dsl::VoiceMode::Poly, 2, 7.f, /*channel=*/0}, [](dsl::Patch& v) {
     auto env = v.adsr(0.05, 0.5, 0.6, 0.8);
     v.output(v.saw(v.pitch()) * env * 0.08f >> dsl::lowpass(1500.f, 0.8f));
   });
-  // Every voice node hears every note (per-channel note routing is a follow-up), so the legato bass
-  // follows the last chord note two octaves down.
-  auto bass = p.voices({1, dsl::VoiceMode::Legato}, [](dsl::Patch& v) {
+  // Routing: the pad plays MIDI channel 1 (index 0), the legato bass channel 2 (index 1).
+  auto bass = p.voices({1, dsl::VoiceMode::Legato, 1, 0.f, /*channel=*/1}, [](dsl::Patch& v) {
     auto env = v.adsr(0.003, 0.15, 0.7, 0.1);
-    v.output(v.square(v.pitch() * 0.25f, 0.4f) * env * 0.25f >> dsl::ladder(350.f + env * 900.f, 0.35f, 1.5));
+    v.output(v.square(v.pitch(), 0.4f) * env * 0.25f >> dsl::ladder(350.f + env * 900.f, 0.35f, 1.5));
   });
   auto hatEnv = (p.sine(4.f) + 1.f) * 0.5f;  // 8th-note pulse at 120 bpm
   auto hat = (p.noise(3) >> dsl::highpass(7000.f, 0.9f)) * hatEnv * hatEnv * hatEnv * 0.05f;
@@ -130,8 +129,14 @@ inline std::vector<Demo> all() {
          std::vector<Event> ev;
          const int chords[4][3] = {{57, 60, 64}, {53, 57, 60}, {55, 59, 62}, {52, 55, 59}};
          const int bar = static_cast<int>(sr * 1.0);
+         const int bassRoots[4] = {45, 41, 43, 40};
          for (int c = 0; c < 4; ++c) {
-           for (int n : chords[c]) { ev.push_back(Event::noteOn(c * bar, n, 0.7f)); ev.push_back(Event::noteOff(c * bar + bar - 2000, n)); }
+           for (int n : chords[c]) { ev.push_back(Event::noteOn(c * bar, n, 0.7f, 0)); ev.push_back(Event::noteOff(c * bar + bar - 2000, n, 0)); }
+           for (int k = 0; k < 4; ++k) {  // bass: root on each beat, channel 2 (index 1)
+             const int at = c * bar + k * bar / 4;
+             ev.push_back(Event::noteOn(at, bassRoots[c] - (k == 2 ? 12 : 0), 0.9f, 1));
+             ev.push_back(Event::noteOff(at + bar / 5, bassRoots[c] - (k == 2 ? 12 : 0), 1));
+           }
          }
          ev.push_back(Event::param(2 * bar, 0, 0.9f));
          return ev;

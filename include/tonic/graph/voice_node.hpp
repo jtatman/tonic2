@@ -4,6 +4,8 @@
 //
 // Modes: Poly (one voice per note, `unison` voices per note when > 1), Mono (last-note priority,
 // retrigger on every note), Legato (last-note priority, no retrigger while notes overlap).
+// Routing: a node can listen to one MIDI channel and/or a key range (VoiceConfig::channel, lowKey,
+// highKey), so several voice nodes in one patch play different parts.
 // Stealing when all voices are busy: the oldest released voice first, then the oldest held voice.
 // A released voice is freed once its output stays below -100 dBFS for a whole block.
 #pragma once
@@ -27,6 +29,8 @@ struct VoiceConfig {
   VoiceMode mode = VoiceMode::Poly;
   int unison = 1;            // voices per note (Poly) or voices playing the mono note (Mono/Legato)
   float detuneCents = 0.f;   // unison spread: voices spaced evenly from -detune to +detune
+  int channel = -1;          // only notes on this MIDI channel (0..15); -1 = any. Notes without a channel always pass
+  int lowKey = 0, highKey = 127;  // key range (keyboard split)
 };
 
 class VoiceNode final : public Node {
@@ -150,6 +154,8 @@ class VoiceNode final : public Node {
 
   void handle(const engine::Event& ev) {
     using T = engine::Event::Type;
+    if (cfg_.channel >= 0 && ev.channel >= 0 && ev.channel != cfg_.channel) return;  // routing
+    if (ev.key < cfg_.lowKey || ev.key > cfg_.highKey) return;
     if (ev.type == T::NoteOn && ev.value <= 0.f) return noteOff(ev.key);
     if (ev.type == T::NoteOn) return noteOn(ev.key, ev.value);
     if (ev.type == T::NoteOff) return noteOff(ev.key);

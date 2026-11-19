@@ -3,8 +3,16 @@
 A realtime-safe C++20 synthesis library: the successor core to [Tonic](https://github.com/jtatman/Tonic).
 Released into the public domain under the [Unlicense](LICENSE).
 
-**Status: M3 (parameters, events, macros, offline rendering).** Patching syntax, voices and mixer
-come in later milestones; see the [design document](https://github.com/jtatman/Tonic/blob/phase1-design/docs/phase1-core-design.md).
+```cpp
+dsl::Patch p;
+auto cutoff = p.param("cutoff", 80, 12000, 500);
+auto env    = p.adsr(0.005, 0.25, 0.4, 0.3);
+auto osc    = p.saw(p.pitch()) + p.square(p.pitch() * 0.5f, 0.3f) * 0.6f;
+p.output(osc * env * 0.35f >> dsl::ladder(cutoff + env * 2500.f, 0.3f) >> dsl::pan(0.f));
+auto c = p.compile(48000, 512);   // c.graph, c.layout, c.error
+```
+
+**Status: M4 (patching syntax).** Voices, mixer and plugin adapter come in later milestones; see the [design document](https://github.com/jtatman/Tonic/blob/phase1-design/docs/phase1-core-design.md).
 
 ## DSP kernels (`include/tonic/dsp/`, header-only)
 
@@ -78,3 +86,17 @@ engine.setParam(cutoff, 2000.f);                              // UI thread, smoo
 - Notes drive gate, trigger, pitch and velocity buffers (mono, last-note priority; polyphony is M5).
 - `render::renderOffline()` drives an engine with an event list; `render::writeWavFloat()` writes it.
   `build/tonic2_render out.wav` renders a demo phrase (oscillators, ladder, envelope, macro sweep).
+
+## Patching syntax (M4, `include/tonic/dsl/patch.hpp`)
+
+- `Patch` sources: `param`, `macro`, `pitch/gate/trigger/velocity`, `constant`, `sine/saw/square/triangle`,
+  `noise`, `adsr`, `mtof`, `dbToGain`, `tanh`, `mix`.
+- Arithmetic (`+ - * /`) works between signals and floats; mono signals broadcast to multichannel.
+- Effects apply with `>>`: `ladder(cutoff, resonance, drive)`, `lowpass/highpass/bandpass/notch(cutoff, q)`,
+  `pan(position)`, `delay(seconds, feedback, mix)`. Every setting accepts a float or a signal, so
+  anything can be modulated at audio rate.
+- Mistakes (channel mismatch, signals from another patch, missing output) are reported by `compile()`.
+- `>>` binds looser than `+` and `*`: `a + b >> fx` filters the sum; prefer `(a + b) >> fx`.
+
+`examples/demo_synths.hpp` has a mono synth and ports of Tonic 1's SineSum, FMDrone and FilteredNoise
+demos (differences from the originals are commented). Render one with `build/tonic2_render fmdrone out.wav`.

@@ -28,3 +28,11 @@ void operator delete(void* p) noexcept { trackedFree(p); }
 void operator delete[](void* p) noexcept { trackedFree(p); }
 void operator delete(void* p, std::size_t) noexcept { trackedFree(p); }
 void operator delete[](void* p, std::size_t) noexcept { trackedFree(p); }
+// nothrow forms (used by e.g. std::stable_sort's temporary buffer) must match the replaced delete.
+void* operator new(std::size_t n, const std::nothrow_t&) noexcept {
+  if (tl_audio) g_audioAllocs.fetch_add(1, std::memory_order_relaxed);
+  return std::malloc(n ? n : 1);
+}
+void* operator new[](std::size_t n, const std::nothrow_t& t) noexcept { return operator new(n, t); }
+void operator delete(void* p, const std::nothrow_t&) noexcept { trackedFree(p); }
+void operator delete[](void* p, const std::nothrow_t&) noexcept { trackedFree(p); }

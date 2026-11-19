@@ -26,6 +26,12 @@ if(TONIC2_BUILD_TESTS)
   target_compile_definitions(tonic2_dsp_tests PRIVATE TONIC2_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
   add_test(NAME dsp_tests COMMAND tonic2_dsp_tests)
 
+  find_package(Threads REQUIRED)
+  add_executable(tonic2_graph_tests tests/graph_tests.cpp)
+  target_link_libraries(tonic2_graph_tests PRIVATE tonic2 Threads::Threads)
+  target_compile_options(tonic2_graph_tests PRIVATE ${TONIC2_WARN})
+  add_test(NAME graph_tests COMMAND tonic2_graph_tests)
+
   add_executable(tonic2_golden tools/golden.cpp)
   target_link_libraries(tonic2_golden PRIVATE tonic2)
 endif()

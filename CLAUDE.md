@@ -84,7 +84,8 @@ build/tonic2_golden --update tests/golden   # only for an intentional change to 
 ## Architecture Overview
 
 - Design: `docs/phase1-core-design.md` in the Tonic repo (branch `phase1-design`).
-- Layers (bottom up): DSP kernels (`include/tonic/dsp`, M1) -> graph builder / compiled graph (M2) ->
+- Layers (bottom up): DSP kernels (`include/tonic/dsp`, M1) -> graph builder / compiled graph
+  (`include/tonic/graph`, M2) and engine with lock-free graph swap (`include/tonic/engine`, M2) ->
   engine with sample-accurate events, params, macros (M3) -> patching syntax (M4) -> voices (M5) ->
   mixer + FX matrix (M6). Plugin formats live in a separate DPF adapter (M7).
 
@@ -94,4 +95,6 @@ build/tonic2_golden --update tests/golden   # only for an intentional change to 
   allocation after prepare, no globals, no exceptions. `float` audio, `double` for phase/state.
 - Every kernel gets a behavior test plus a golden render in `tests/renders.hpp`.
 - Golden files must stay bit-stable across compilers; if a change breaks that, find out why first.
+- Audio-thread code (`Node::process`, `Engine::process`) must not allocate, free, lock or throw;
+  `tests/graph_tests.cpp` counts allocations on the audio thread. Graphs are immutable once compiled.
 <!-- END PROJECT SECTION -->

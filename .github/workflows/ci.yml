@@ -19,3 +19,18 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        san: [thread, "address,undefined"]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS="-fsanitize=${{ matrix.san }} -fno-sanitize-recover=all -fno-omit-frame-pointer"
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

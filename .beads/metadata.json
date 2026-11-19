@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "tonic2",
+  "project_id": "3aa02a99-4c14-44ef-a2d7-ed8bd578d318"
+}

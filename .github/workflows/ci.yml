@@ -51,7 +51,7 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: CLAP host test
         run: ctest --test-dir build -C Release --output-on-failure
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: tonic2-poly-${{ matrix.os }}
           path: |

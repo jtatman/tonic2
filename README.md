@@ -157,6 +157,16 @@ cmake --build build -j          # build/bin/tonic2_poly.{vst3,clap,lv2}
 ctest --test-dir build          # includes a minimal CLAP host that loads the plugin and renders a chord
 ```
 
+On Windows with Visual Studio 2022:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/build_windows.ps1   # build-win/bin/tonic2_poly.vst3 etc. + ctest
+powershell -ExecutionPolicy Bypass -File tools/host_render.ps1     # render a song through the VST3 in a real host
+```
+
+`host_render.ps1` drives the songengine Go VST3 host offline (`-plugin role=path.vst3` on every part) and
+checks the output level. It accepts `-Plugin` for any other VST3.
+
 - `TonicDpfPlugin` (generic): engine parameters become host parameters; MIDI notes become
   sample-accurate engine events; the patch is compiled in `activate()` at the host sample rate.
 - New plugin = a `DistrhoPluginInfo.h` + a one-line `createPlugin()` passing a patch build function.

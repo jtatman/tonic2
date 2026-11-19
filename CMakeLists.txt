@@ -6,6 +6,8 @@ option(TONIC2_BUILD_TESTS "Build tests and the golden-file tool" ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# Static MSVC runtime: plugins and tools load without the VC++ redistributable.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Header-only for now (M1 = DSP kernels).
 add_library(tonic2 INTERFACE)
@@ -13,7 +15,8 @@ add_library(tonic2::tonic2 ALIAS tonic2)
 target_include_directories(tonic2 INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_compile_features(tonic2 INTERFACE cxx_std_20)
 if(MSVC)
-  target_compile_definitions(tonic2 INTERFACE _USE_MATH_DEFINES NOMINMAX)
+  target_compile_definitions(tonic2 INTERFACE _USE_MATH_DEFINES NOMINMAX _CRT_SECURE_NO_WARNINGS)
+  target_compile_options(tonic2 INTERFACE /wd4324)  # padding from alignas(64) in SpscQueue is intended
 endif()
 
 if(TONIC2_BUILD_TESTS)

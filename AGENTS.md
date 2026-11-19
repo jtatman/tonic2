@@ -143,6 +143,12 @@ bd prime                # Refresh Beads context
 Builds run in WSL (g++ 15, cmake 4.x) or on the Mac `osx` over ssh (Apple clang 14, no cmake: compile
 directly). CI covers Linux, Windows (MSVC) and macOS.
 
+Windows (this machine, Visual Studio 2022): `tools/build_windows.ps1` builds everything into `build-win/`
+(plugins in `build-win/bin/tonic2_poly.{vst3,clap,lv2}`) and runs ctest. Real-host test:
+`tools/host_render.ps1` renders a song through the VST3 with the songengine Go VST3 host
+(`C:/Users/stora/Downloads/VSTHostSynthesizerEngine`, override with `TONIC2_SONGENGINE`). Reaper is not
+used anywhere; use the songengine host for VST3 checks.
+
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j && ctest --test-dir build --output-on-failure
 build/tonic2_golden --update tests/golden   # only for an intentional change to a reference render

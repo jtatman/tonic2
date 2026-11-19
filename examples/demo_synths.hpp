@@ -82,8 +82,34 @@ inline void filteredNoise(dsl::Patch& p) {
   p.output((p.mix(bands) * (1.f + q * 0.05f) + bass * 0.05f) >> dsl::pan(0.f));
 }
 
+// Polyphonic synth: 8 voices with 2-voice unison, per-voice filter envelope, shared cutoff param and a
+// stereo delay on the summed voices.
+inline void polySynth(dsl::Patch& p) {
+  auto cutoff = p.param("cutoff", 100.f, 8000.f, 900.f, 0.05f);
+  auto voices = p.voices({8, dsl::VoiceMode::Poly, 2, 9.f}, [&](dsl::Patch& v) {
+    auto env = v.adsr(0.01, 0.4, 0.5, 0.6);
+    auto osc = v.saw(v.pitch()) * 0.5f + v.triangle(v.pitch() * 2.f) * 0.2f;
+    v.output(osc * env * v.velocity() * 0.12f >> dsl::lowpass(v.use(cutoff) + env * 2500.f, 1.2f));
+  });
+  p.output(voices >> dsl::pan(0.f) >> dsl::delay(0.33, 0.35f, 0.25f));
+}
+
 inline std::vector<Demo> all() {
   return {
+      {"poly", polySynth,
+       [](double sr) {
+         std::vector<Event> ev;
+         const int chords[4][3] = {{57, 60, 64}, {53, 57, 60}, {55, 59, 62}, {52, 55, 59}};
+         const int bar = static_cast<int>(sr * 0.8);
+         for (int c = 0; c < 4; ++c)
+           for (int n : chords[c]) {
+             ev.push_back(Event::noteOn(c * bar, n, 0.8f));
+             ev.push_back(Event::noteOff(c * bar + bar * 7 / 8, n));
+           }
+         for (int k = 0; k <= 12; ++k) ev.push_back(Event::param(k * bar / 3, 0, 500.f + 200.f * k));
+         return ev;
+       },
+       4.0},
       {"mono", monoSynth,
        [](double sr) {
          std::vector<Event> ev;

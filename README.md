@@ -12,7 +12,7 @@ p.output(osc * env * 0.35f >> dsl::ladder(cutoff + env * 2500.f, 0.3f) >> dsl::p
 auto c = p.compile(48000, 512);   // c.graph, c.layout, c.error
 ```
 
-**Status: M4 (patching syntax).** Voices, mixer and plugin adapter come in later milestones; see the [design document](https://github.com/jtatman/Tonic/blob/phase1-design/docs/phase1-core-design.md).
+**Status: M5 (voices).** Mixer/FX matrix and the plugin adapter come in later milestones; see the [design document](https://github.com/jtatman/Tonic/blob/phase1-design/docs/phase1-core-design.md).
 
 ## DSP kernels (`include/tonic/dsp/`, header-only)
 
@@ -100,3 +100,25 @@ engine.setParam(cutoff, 2000.f);                              // UI thread, smoo
 
 `examples/demo_synths.hpp` has a mono synth and ports of Tonic 1's SineSum, FMDrone and FilteredNoise
 demos (differences from the originals are commented). Render one with `build/tonic2_render fmdrone out.wav`.
+
+## Voices (M5)
+
+```cpp
+auto cutoff = p.param("cutoff", 100, 8000, 900);
+auto synth = p.voices({8, dsl::VoiceMode::Poly, 2, 9.f}, [&](dsl::Patch& v) {   // 8 voices, 2-voice unison, +/-9 cents
+  auto env = v.adsr(0.01, 0.4, 0.5, 0.6);
+  v.output(v.saw(v.pitch()) * env * v.velocity() >> dsl::lowpass(v.use(cutoff) + env * 2500.f));
+});
+p.output(synth >> dsl::pan(0.f) >> dsl::delay(0.33, 0.35f, 0.25f));   // shared effects after the voices
+```
+
+- Modes: `Poly`, `Mono` (last-note priority, retrigger), `Legato` (no retrigger while notes overlap);
+  `unison` voices per note with symmetric detune.
+- Stealing takes the oldest released voice, then the oldest held one. Released voices are freed once
+  silent (below -100 dBFS for a block) and cost nothing while free.
+- Per-voice signals: `pitch`, `gate`, `trigger`, `velocity`, and per-note expressions `pressure`,
+  `timbre` and pitch bend (`Event::expression`, as in CLAP note expressions / MPE).
+- Outer parameters are read inside a voice with `v.use(param)`; declaring parameters inside a voice is
+  an error. The build function runs once per voice immediately, so it may capture locals by reference.
+- Benchmark (`voice_tests`): a 16-voice saw+square+ladder synth runs at ~55x realtime on one core
+  (WSL, recent x86) and ~37x on a 2019-era Intel Mac.

@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <concepts>
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -28,6 +29,7 @@
 #include "../graph/graph.hpp"
 #include "../graph/nodes.hpp"
 #include "../graph/signal_nodes.hpp"
+#include "../graph/voice_node.hpp"
 
 namespace tonic::dsl {
 
@@ -52,7 +54,11 @@ class Signal {
 // A parameter is a signal that also knows its engine parameter id.
 struct Param : Signal {
   int id = -1;
+  float def = 0.f;
 };
+
+using graph::VoiceConfig;
+using graph::VoiceMode;
 
 // A constant or a signal (accepted wherever a setting can be modulated).
 struct Value {
@@ -84,12 +90,15 @@ class Patch {
 
   // --- parameters and macros ---
   Param param(std::string name, float min, float max, float def, float smoothSeconds = 0.02f) {
+    if (isVoice_) { fail("declare parameters on the outer patch and read them in a voice with use()"); return {}; }
     Param p;
+    p.def = def;
     p.id = layout_.add({std::move(name), min, max, def, smoothSeconds});
     static_cast<Signal&>(p) = make(std::make_unique<graph::ParamSignalNode>(p.id, def), 1);
     return p;
   }
   void macro(const Param& m, std::vector<MacroTarget> targets) {
+    if (isVoice_) { fail("declare macros on the outer patch"); return; }
     engine::MacroSpec spec{m.id, {}};
     for (const auto& t : targets) spec.targets.push_back({t.target.id, t.lo, t.hi, t.curve});
     layout_.macros.push_back(std::move(spec));
@@ -100,6 +109,34 @@ class Patch {
   Signal gate() { return control(graph::ControlSignalNode::Kind::Gate, 0.f); }
   Signal trigger() { return control(graph::ControlSignalNode::Kind::Trigger, 0.f); }
   Signal velocity() { return control(graph::ControlSignalNode::Kind::Velocity, 0.f); }
+  Signal pressure() { return control(graph::ControlSignalNode::Kind::Pressure, 0.f); }  // per-note, inside voices
+  Signal timbre() { return control(graph::ControlSignalNode::Kind::Timbre, 0.f); }      // per-note, inside voices
+
+  // --- voices ---
+  // Calls `build` once per voice right away (so lambdas may capture locals by reference) and sums
+  // the voices; the voice patches are compiled when the outer patch is compiled. Inside the voice, pitch(),
+  // gate(), trigger(), velocity(), pressure() and timbre() are per voice; read outer parameters with
+  // use(param). Effects applied to the returned signal are shared by all voices.
+  Signal voices(VoiceConfig cfg, std::function<void(Patch&)> build) {
+    if (isVoice_) { fail("voices cannot be nested"); return constant(0.f); }
+    auto pool = std::make_shared<std::vector<std::unique_ptr<Patch>>>();
+    for (int i = 0; i < std::max(1, cfg.voices); ++i) {
+      pool->push_back(std::unique_ptr<Patch>(new Patch(VoiceTag{})));
+      build(*pool->back());
+    }
+    const Patch& first = *pool->front();
+    if (!first.error_.empty()) { fail("in voice: " + first.error_); return constant(0.f); }
+    if (!first.hasOutput_) { fail("voice has no output"); return constant(0.f); }
+    const int ch = first.outChannels_;
+    auto next = std::make_shared<size_t>(0);
+    auto factory = [pool, next](double sr, int maxBlock) -> std::unique_ptr<graph::CompiledGraph> {
+      if (*next >= pool->size()) return nullptr;
+      return (*pool)[(*next)++]->compile(sr, maxBlock).graph;
+    };
+    return make(std::make_unique<graph::VoiceNode>(cfg, ch, std::move(factory)), ch);
+  }
+  // Inside a voice: a per-sample signal for a parameter declared on the outer patch.
+  Signal use(const Param& p) { return make(std::make_unique<graph::ParamSignalNode>(p.id, p.def), 1); }
 
   // --- sources ---
   Signal constant(float v) { return make(std::make_unique<graph::ConstantNode>(v), 1); }
@@ -136,6 +173,7 @@ class Patch {
     if (!own(s)) return;
     builder_.setOutput(s.node_, s.port_);
     hasOutput_ = true;
+    outChannels_ = s.channels();
   }
 
   Compiled compile(double sampleRate, int maxBlock) {
@@ -183,6 +221,9 @@ class Patch {
   void fail(const std::string& msg) { if (error_.empty()) error_ = msg; }
 
  private:
+  struct VoiceTag {};
+  explicit Patch(VoiceTag) : isVoice_(true) {}
+
   bool own(const Signal& s) {
     if (s.patch_ == this) return true;
     fail(s.valid() ? "signal belongs to a different patch" : "use of an empty signal");
@@ -217,9 +258,10 @@ class Patch {
 
   graph::GraphBuilder builder_;
   engine::Layout layout_;
-  Signal controls_[4];
+  Signal controls_[static_cast<int>(graph::ControlSignalNode::Kind::Timbre) + 1];  // one cached signal per kind
   std::string error_;
-  bool hasOutput_ = false, compiled_ = false;
+  bool hasOutput_ = false, compiled_ = false, isVoice_ = false;
+  int outChannels_ = 1;
 };
 
 // ---- arithmetic ----

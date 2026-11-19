@@ -124,6 +124,12 @@ class Engine {
     int e = 0;
     for (int offset = 0; offset < numFrames;) {
       const int n = std::min(maxBlock_, numFrames - offset);
+      // Hand this block's events to the graph (voice nodes allocate voices from them).
+      int eEnd = e;
+      while (eEnd < numEvents && events[eEnd].frame < offset + n) ++eEnd;
+      control_.events = events ? events + e : nullptr;
+      control_.numEvents = eEnd - e;
+      control_.eventOffset = offset;
       for (int i = 0; i < n; ++i) {
         while (e < numEvents && events[e].frame <= offset + i) apply(events[e++]);
         computeFrame(i);
@@ -182,6 +188,8 @@ class Engine {
         break;
       case Event::Type::NoteOff:
         noteOff(ev.key);
+        break;
+      case Event::Type::Expression:  // per-note expressions are handled by voice nodes
         break;
     }
   }

@@ -5,6 +5,8 @@
 #include <utility>
 #include <vector>
 
+#include "../engine/events.hpp"
+
 namespace tonic::graph {
 
 // Per-sample control signals computed by the engine for the current block (sample-accurate).
@@ -12,10 +14,17 @@ namespace tonic::graph {
 struct ControlBuffers {
   const float* const* params = nullptr;  // params[id][frame], smoothed, macros applied
   int numParams = 0;
-  const float* gate = nullptr;     // 1 while a note is held (mono, last-note priority until M5 voices)
+  const float* gate = nullptr;     // 1 while a note is held (engine: mono last-note priority; voices: per voice)
   const float* trigger = nullptr;  // 1 on the frame a note starts
   const float* pitchHz = nullptr;  // frequency of the current note
   const float* velocity = nullptr; // velocity of the current note
+  const float* pressure = nullptr; // per-note pressure (set inside voices)
+  const float* timbre = nullptr;   // per-note timbre (set inside voices)
+  // The process() call's events that fall in this block. Frames are relative to the process() call;
+  // subtract eventOffset for a frame inside this block. Used by voice nodes.
+  const engine::Event* events = nullptr;
+  int numEvents = 0;
+  int eventOffset = 0;
 };
 
 // Buffers for one process call. input(port, ch) / output(port, ch) point at numFrames samples.

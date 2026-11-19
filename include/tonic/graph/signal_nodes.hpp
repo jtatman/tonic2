@@ -42,7 +42,7 @@ class ParamSignalNode final : public Node {
 // Outputs one of the engine's note control signals.
 class ControlSignalNode final : public Node {
  public:
-  enum class Kind { Gate, Trigger, Pitch, Velocity };
+  enum class Kind { Gate, Trigger, Pitch, Velocity, Pressure, Timbre };
   ControlSignalNode(Kind k, float fallback) : Node({}, {1}), kind_(k), fallback_(fallback) {}
   void process(const ProcessArgs& a) override {
     const float* src = nullptr;
@@ -52,6 +52,8 @@ class ControlSignalNode final : public Node {
         case Kind::Trigger: src = a.control->trigger; break;
         case Kind::Pitch: src = a.control->pitchHz; break;
         case Kind::Velocity: src = a.control->velocity; break;
+        case Kind::Pressure: src = a.control->pressure; break;
+        case Kind::Timbre: src = a.control->timbre; break;
       }
     }
     float* out = a.output(0, 0);

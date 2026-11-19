@@ -43,6 +43,11 @@ if(TONIC2_BUILD_TESTS)
   target_compile_options(tonic2_dsl_tests PRIVATE ${TONIC2_WARN})
   add_test(NAME dsl_tests COMMAND tonic2_dsl_tests)
 
+  add_executable(tonic2_voice_tests tests/voice_tests.cpp)
+  target_link_libraries(tonic2_voice_tests PRIVATE tonic2)
+  target_compile_options(tonic2_voice_tests PRIVATE ${TONIC2_WARN})
+  add_test(NAME voice_tests COMMAND tonic2_voice_tests)
+
   add_executable(tonic2_render tools/render.cpp)
   target_link_libraries(tonic2_render PRIVATE tonic2)
   target_include_directories(tonic2_render PRIVATE examples)

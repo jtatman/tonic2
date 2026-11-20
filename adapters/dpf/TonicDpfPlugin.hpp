@@ -93,6 +93,8 @@ class TonicDpfPlugin : public Plugin {
       if (status == 0x90 && vel > 0) events_.push_back(tonic::engine::Event::noteOn(frame, note, vel / 127.f, channel));
       else if (status == 0x80 || (status == 0x90 && vel == 0)) events_.push_back(tonic::engine::Event::noteOff(frame, note, channel));
       else if (status == 0xB0) events_.push_back(tonic::engine::Event::cc(frame, note, vel / 127.f, channel));  // data1 = CC number
+      else if (status == 0xE0)  // pitch wheel: 14-bit, centre 8192
+        events_.push_back(tonic::engine::Event::pitchWheel(frame, (static_cast<float>(note | (vel << 7)) - 8192.f) / 8192.f, channel));
     }
     engine_.process(nullptr, 0, outputs, DISTRHO_PLUGIN_NUM_OUTPUTS, static_cast<int>(frames), events_.data(),
                     static_cast<int>(events_.size()));

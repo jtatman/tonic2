@@ -205,7 +205,8 @@ class Engine {
         removeNote(ev.key);
         if (noteCount_ == kMaxNotes) { std::memmove(notes_, notes_ + 1, sizeof(int) * (kMaxNotes - 1)); --noteCount_; }
         notes_[noteCount_++] = ev.key;
-        pitchHz_ = dsp::midiToHz(static_cast<float>(ev.key));
+        lastNote_ = ev.key;
+        pitchHz_ = dsp::midiToHz(static_cast<float>(ev.key) + wheelSemis_);
         velocityValue_ = ev.value;
         pendingTrigger_ = true;
         break;
@@ -213,6 +214,10 @@ class Engine {
         noteOff(ev.key);
         break;
       case Event::Type::Expression:  // per-note expressions are handled by voice nodes
+        break;
+      case Event::Type::PitchWheel:  // mono path: fixed 2-semitone range (voice nodes have their own)
+        wheelSemis_ = 2.f * std::clamp(ev.value, -1.f, 1.f);
+        pitchHz_ = dsp::midiToHz(static_cast<float>(lastNote_) + wheelSemis_);
         break;
       case Event::Type::ControlChange: {
         if (ev.key < 0 || ev.key >= 128) break;
@@ -237,7 +242,10 @@ class Engine {
   // Last-note priority: releasing the newest note falls back to the previous held one (legato).
   void noteOff(int key) {
     removeNote(key);
-    if (noteCount_ > 0) pitchHz_ = dsp::midiToHz(static_cast<float>(notes_[noteCount_ - 1]));
+    if (noteCount_ > 0) {
+      lastNote_ = notes_[noteCount_ - 1];
+      pitchHz_ = dsp::midiToHz(static_cast<float>(lastNote_) + wheelSemis_);
+    }
   }
 
   void computeFrame(int i) {
@@ -279,6 +287,8 @@ class Engine {
   int notes_[kMaxNotes] = {};
   int noteCount_ = 0;
   float pitchHz_ = 440.f, velocityValue_ = 0.f;
+  float wheelSemis_ = 0.f;
+  int lastNote_ = 69;
   bool pendingTrigger_ = false;
 
   std::atomic<graph::CompiledGraph*> pending_{nullptr};

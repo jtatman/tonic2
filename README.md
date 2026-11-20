@@ -119,6 +119,9 @@ p.output(synth >> dsl::pan(0.f) >> dsl::delay(0.33, 0.35f, 0.25f));   // shared 
   silent (below -100 dBFS for a block) and cost nothing while free.
 - Per-voice signals: `pitch`, `gate`, `trigger`, `velocity`, and per-note expressions `pressure`,
   `timbre` and pitch bend (`Event::expression`, as in CLAP note expressions / MPE).
+- Glide and pitch wheel: `VoiceConfig::glideSeconds` (one-pole portamento on the note pitch; voices starting
+  from silence jump) and `bendRange` (pitch wheel, `Event::pitchWheel`, -1..1). Bends apply instantly on top
+  of the glide. The plugin adapter forwards MIDI pitch-wheel messages.
 - Routing: `VoiceConfig::channel` (MIDI channel 0..15, -1 = any) and `lowKey`/`highKey` let several voice
   nodes in one patch play different parts or a keyboard split; events without a channel reach every node.
   The DPF adapter keeps the MIDI channel of incoming notes.

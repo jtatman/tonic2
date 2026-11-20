@@ -31,6 +31,8 @@ struct VoiceConfig {
   float detuneCents = 0.f;   // unison spread: voices spaced evenly from -detune to +detune
   int channel = -1;          // only notes on this MIDI channel (0..15); -1 = any. Notes without a channel always pass
   int lowKey = 0, highKey = 127;  // key range (keyboard split)
+  float glideSeconds = 0.f;  // portamento time constant (0 = off); the note pitch glides, bends do not
+  float bendRange = 2.f;     // pitch wheel range in semitones
 };
 
 class VoiceNode final : public Node {
@@ -60,6 +62,8 @@ class VoiceNode final : public Node {
     }
     noteCount_ = 0;
     clock_ = 0;
+    wheel_ = 0.f;
+    glideCoef_ = cfg_.glideSeconds > 0.f ? 1.0 - std::exp(-1.0 / (cfg_.glideSeconds * sampleRate)) : 1.0;
   }
 
   void process(const ProcessArgs& a) override {
@@ -73,6 +77,12 @@ class VoiceNode final : public Node {
         v.gate[i] = v.held ? 1.f : 0.f;
         v.trigger[i] = v.pendingTrigger ? 1.f : 0.f;
         v.pendingTrigger = false;
+        if (v.semi != v.note) {  // glide toward the note
+          const double target = v.note;
+          v.semi += (target - v.semi) * glideCoef_;
+          if (std::fabs(target - v.semi) < 1e-6) v.semi = target;
+          retune(v);
+        }
         v.pitch[i] = v.hz;
         v.velocity[i] = v.vel;
         v.pressure[i] = v.press;
@@ -109,6 +119,7 @@ class VoiceNode final : public Node {
     ControlBuffers control;
     int note = 60;
     float vel = 0.f, bend = 0.f, press = 0.f, timb = 0.f, detune = 1.f, hz = 261.6256f;
+    double semi = 60.0;  // gliding note pitch in semitones (double: float steps stall short of the target)
     bool held = false, active = false, pendingTrigger = false;
     uint64_t age = 0;  // allocation time (held) or release time (released)
   };
@@ -119,7 +130,7 @@ class VoiceNode final : public Node {
     return c;
   }
 
-  static void retune(Voice& v) { v.hz = dsp::midiToHz(static_cast<float>(v.note) + v.bend) * v.detune; }
+  void retune(Voice& v) const { v.hz = dsp::midiToHz(static_cast<float>(v.semi + v.bend + wheel_ * cfg_.bendRange)) * v.detune; }
 
   float detuneFor(int u) const {
     if (cfg_.unison <= 1) return 1.f;
@@ -128,12 +139,14 @@ class VoiceNode final : public Node {
   }
 
   void start(Voice& v, int note, float vel, int u, bool retrigger) {
+    const bool fresh = !v.active;  // a voice coming from silence jumps to its note instead of gliding
     v.note = note;
     v.vel = vel;
     v.bend = 0.f;
     v.press = 0.f;
     v.timb = 0.f;
     v.detune = detuneFor(u);
+    if (fresh || glideCoef_ >= 1.0) v.semi = note;
     retune(v);
     v.held = true;
     v.active = true;
@@ -155,6 +168,11 @@ class VoiceNode final : public Node {
   void handle(const engine::Event& ev) {
     using T = engine::Event::Type;
     if (cfg_.channel >= 0 && ev.channel >= 0 && ev.channel != cfg_.channel) return;  // routing
+    if (ev.type == engine::Event::Type::PitchWheel) {
+      wheel_ = std::clamp(ev.value, -1.f, 1.f);
+      for (Voice& v : voices_) retune(v);
+      return;
+    }
     if (ev.key < cfg_.lowKey || ev.key > cfg_.highKey) return;
     if (ev.type == T::NoteOn && ev.value <= 0.f) return noteOff(ev.key);
     if (ev.type == T::NoteOn) return noteOn(ev.key, ev.value);
@@ -209,6 +227,8 @@ class VoiceNode final : public Node {
   int notes_[kMaxNotes] = {};
   int noteCount_ = 0;
   uint64_t clock_ = 0;
+  float wheel_ = 0.f;
+  double glideCoef_ = 1.0;
 };
 
 }  // namespace tonic::graph

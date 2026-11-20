@@ -171,6 +171,46 @@ void testRouting() {
         "key split: low and high nodes", fmt(split[100]) + " -> " + fmt(split[300]));
 }
 
+void testGlideAndWheel() {
+  graph::VoiceConfig mono{1, graph::VoiceMode::Legato};
+  mono.glideSeconds = 0.1f;
+  Rig g;
+  makeRig(g, mono, gatedPitchVoice);
+  auto out = run(g.engine, 60000, {Event::noteOn(0, 60), Event::noteOn(1000, 72)});  // ~12 time constants
+  const float semi = 60.f + 12.f * (1.f - std::exp(-1.f));  // one time constant after the second note
+  check(std::fabs(out[10] - hz(60)) < 0.01f, "first note from silence does not glide", fmt(out[10]));
+  check(std::fabs(out[1000 + 4800] - hz(semi)) < 0.5f, "legato glide: 63% of the way after one time constant",
+        fmt(out[5800]) + " vs " + fmt(hz(semi)));
+  check(std::fabs(out[59999] - hz(72)) < 0.01f, "glide arrives", fmt(out[59999]));
+
+  Rig w;
+  makeRig(w, {2, graph::VoiceMode::Poly}, gatedPitchVoice);
+  auto wh = run(w.engine, 600, {Event::noteOn(0, 60), Event::pitchWheel(200, 1.f), Event::pitchWheel(400, -0.5f)});
+  check(std::fabs(wh[300] - hz(62)) < 0.01f && std::fabs(wh[500] - hz(59)) < 0.01f, "pitch wheel, 2-semitone range",
+        fmt(wh[300]) + ", " + fmt(wh[500]));
+
+  graph::VoiceConfig wide{1, graph::VoiceMode::Mono};
+  wide.bendRange = 12.f;
+  wide.glideSeconds = 0.5f;
+  Rig ww;
+  makeRig(ww, wide, gatedPitchVoice);
+  auto wo = run(ww.engine, 400, {Event::noteOn(0, 60), Event::pitchWheel(200, 0.5f)});
+  check(std::fabs(wo[200] - hz(66)) < 0.01f, "wheel applies instantly even with glide on (12-semitone range)", fmt(wo[200]));
+}
+
+void testStealIsContinuous() {
+  // Oscillators keep their phase and the envelope retriggers from its current level, so stealing a sounding
+  // voice must not produce a jump bigger than the signal's own steepest slope.
+  Rig r;
+  makeRig(r, {1, graph::VoiceMode::Poly}, [](dsl::Patch& v) { v.output(v.sine(v.pitch()) * v.adsr(0.002, 0.05, 0.8, 0.05)); });
+  auto out = run(r.engine, 6000, {Event::noteOn(0, 60), Event::noteOn(2000, 84)});
+  float steal = 0.f;
+  for (int i = 1990; i < 2010; ++i) steal = std::max(steal, std::fabs(out[i] - out[i - 1]));
+  const float maxSlope = static_cast<float>(dsp::kTwoPi * hz(84) / kSr);  // steepest step of a full-scale sine at the new pitch
+  check(steal <= maxSlope, "stealing a sounding voice is click-free (no jump beyond a full-scale sine slope)",
+        "max step at steal " + fmt(steal) + " vs limit " + fmt(maxSlope));
+}
+
 void synthVoice(dsl::Patch& v) {
   auto env = v.adsr(0.005, 0.2, 0.5, 0.2);
   auto osc = v.saw(v.pitch()) + v.square(v.pitch() * 0.5f) * 0.5f;
@@ -237,6 +277,8 @@ int main() {
   testExpressions();
   testSharedParamsAndDsl();
   testRouting();
+  testGlideAndWheel();
+  testStealIsContinuous();
   testPolyEqualsSumOfVoices();
   testNoAllocationsAndBenchmark();
   std::printf("\n%d failure(s)\n", failures);

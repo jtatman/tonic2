@@ -156,6 +156,15 @@ void testMidiCc() {
         "MIDI learn binds the next CC; CC drives a macro and its targets", fmt(learned[100]));
 }
 
+void testEngineWheel() {
+  engine::Engine e;
+  e.prepare(kSr, kMax, {});
+  e.setGraph(probe(ProbeNode::What::Pitch));
+  auto out = run(e, 400, {Event::noteOn(0, 60), Event::pitchWheel(200, 1.f)});
+  check(std::fabs(out[100] - dsp::midiToHz(60)) < 1e-3f && std::fabs(out[300] - dsp::midiToHz(62)) < 1e-3f,
+        "engine mono path: pitch wheel (2 semitones)", fmt(out[300]));
+}
+
 void testParamsSurviveGraphSwap() {
   engine::Layout L;
   const int p = L.add("p", 0.f, 1.f, 0.f, 0.f);
@@ -239,6 +248,7 @@ int main() {
   testMacros();
   testNotes();
   testMidiCc();
+  testEngineWheel();
   testParamsSurviveGraphSwap();
   testHostBlockIndependence();
   testWavRoundTrip();

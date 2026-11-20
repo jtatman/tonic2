@@ -4,6 +4,7 @@
 #include <string>
 
 #include "demo_synths.hpp"
+#include "tonic/ui/ccmap.hpp"
 #include "tonic/ui/surface.hpp"
 
 using namespace tonic;
@@ -52,6 +53,18 @@ int main() {
   const auto sm = ui::buildSurface(many);
   check(sm.main.size() == 8 && sm.detail.size() == 3, "at most 8 main controls; hidden params omitted",
         std::to_string(sm.main.size()) + " main, " + std::to_string(sm.detail.size()) + " detail");
+
+  // CC map persistence format.
+  ui::CcMap cm = ui::emptyCcMap();
+  cm[74] = 0;
+  cm[1] = 4;
+  cm[127] = 5;
+  const std::string txt = ui::serializeCcMap(cm);
+  check(txt == "1=4,74=0,127=5" && ui::parseCcMap(txt, 6) == cm, "CC map round trip", txt);
+  const auto bad = ui::parseCcMap("1=4,x=2,200=1,5=99,7=,=3,9=2junk,74=0", 6);
+  check(bad[1] == 4 && bad[74] == 0 && bad[5] == -1 && bad[9] == -1 && bad[7] == -1, "CC map parsing skips malformed entries",
+        ui::serializeCcMap(bad));
+  check(ui::parseCcMap("", 6) == ui::emptyCcMap(), "empty CC map", "ok");
   std::printf("\n%d failure(s)\n", failures);
   return failures == 0 ? 0 : 1;
 }

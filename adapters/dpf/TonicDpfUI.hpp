@@ -6,8 +6,11 @@
 //   DETAIL  every visible parameter as a slider.
 //
 // Mouse: drag a knob vertically (Shift = fine), drag or click a slider, scroll to nudge, double-click or
-// right-click to reset to the default. The header button switches pages.
-// For screenshots, TONIC2_UI_PAGE=detail opens the detail page.
+// right-click to reset to the default. Header buttons: LEARN (MIDI learn) and DETAIL/MAIN (pages).
+// MIDI learn: in LEARN mode click a control, then move a knob on your MIDI controller; right-click a control
+// to clear its CC. Bindings are saved with the project (plugin state "ccmap"). When the UI shares the
+// plugin's process (direct access) it shows learned bindings live.
+// For screenshots: TONIC2_UI_PAGE=detail opens the detail page, TONIC2_UI_PAGE=learn shows learn mode.
 #pragma once
 
 #include <cmath>
@@ -18,6 +21,8 @@
 #include <vector>
 
 #include "DistrhoUI.hpp"
+#include "TonicDpfPlugin.hpp"
+#include "tonic/ui/ccmap.hpp"
 #include "tonic/dsl/patch.hpp"
 #include "tonic/ui/surface.hpp"
 
@@ -35,7 +40,12 @@ class TonicDpfUI : public UI {
     layout_ = p.compile(48000.0, 256).layout;
     surface_ = tonic::ui::buildSurface(layout_);
     for (const auto& s : layout_.params) values_.push_back(s.def);
-    if (const char* page = std::getenv("TONIC2_UI_PAGE")) detail_ = std::string(page) == "detail";
+    ccLive_ = tonic::ui::emptyCcMap();
+    for (const auto& b : layout_.ccBindings) if (b.cc >= 0 && b.cc < 128) ccLive_[static_cast<size_t>(b.cc)] = b.param;
+    if (const char* page = std::getenv("TONIC2_UI_PAGE")) {
+      detail_ = std::string(page) == "detail";
+      if (std::string(page) == "learn") { learnMode_ = true; armed_ = surface_.main.empty() ? -1 : surface_.main[0]; }
+    }
     const double s = getScaleFactor();
     if (s != 1.0) setSize(static_cast<uint>(kW * s), static_cast<uint>(kH * s));
     setGeometryConstraints(static_cast<uint>(kW * s), static_cast<uint>(kH * s), true);
@@ -54,14 +64,18 @@ class TonicDpfUI : public UI {
     box(0, 0, kW, kH, kBg, 0);
     fontFace(NANOVG_DEJAVU_SANS_TTF);
     label(24, 32, title_, 20, kInk, ALIGN_LEFT | ALIGN_MIDDLE);
-    label(24, 52, detail_ ? "all parameters" : "macros and main controls", 11, kMute, ALIGN_LEFT | ALIGN_MIDDLE);
+    const char* sub = learnMode_ ? (armed_ >= 0 ? "now move a knob on your MIDI controller" : "click a control to learn its CC, right-click to clear")
+                                 : (detail_ ? "all parameters" : "macros and main controls");
+    label(24, 52, sub, 11, learnMode_ ? kAccent[0] : kMute, ALIGN_LEFT | ALIGN_MIDDLE);
     box(kW - 120, 16, 96, 30, hoverButton_ ? kInk : kPanel, 6);
     label(kW - 72, 31, detail_ ? "MAIN" : "DETAIL", 12, hoverButton_ ? kPanel : kInk, ALIGN_CENTER | ALIGN_MIDDLE);
+    box(kW - 228, 16, 96, 30, learnMode_ ? kAccent[0] : (hoverLearn_ ? kInk : kPanel), 6);
+    label(kW - 180, 31, "LEARN", 12, learnMode_ || hoverLearn_ ? kPanel : kInk, ALIGN_CENTER | ALIGN_MIDDLE);
     const int show = active_ >= 0 ? active_ : hover_;
-    if (show >= 0 && ctls_[show].param >= 0) {
+    if (!learnMode_ && show >= 0 && ctls_[show].param >= 0) {
       const auto& spec = layout_.params[static_cast<size_t>(ctls_[show].param)];
       const std::string t = upper(spec.name) + "  " + tonic::ui::formatValue(spec, values_[static_cast<size_t>(ctls_[show].param)]);
-      label(kW - 136, 31, t, 12, kAccent[0], ALIGN_RIGHT | ALIGN_MIDDLE);
+      label(kW - 244, 31, t, 12, kAccent[0], ALIGN_RIGHT | ALIGN_MIDDLE);
     }
     for (size_t i = 0; i < ctls_.size(); ++i) {
       const bool hot = static_cast<int>(i) == active_ || static_cast<int>(i) == hover_;
@@ -75,7 +89,27 @@ class TonicDpfUI : public UI {
     const float s = static_cast<float>(getScaleFactor());
     const float mx = static_cast<float>(ev.pos.getX()) / s, my = static_cast<float>(ev.pos.getY()) / s;
     if (ev.press && inButton(mx, my)) { detail_ = !detail_; hover_ = active_ = -1; repaint(); return true; }
+    if (ev.press && inLearnButton(mx, my)) {
+      learnMode_ = !learnMode_;
+      if (!learnMode_ && armed_ >= 0) { armed_ = -1; setState("learn", "-1"); }
+      repaint();
+      return true;
+    }
     const int i = hit(mx, my);
+    if (learnMode_) {  // learn mode: left click arms MIDI learn, right click clears the control's CCs
+      if (!ev.press || i < 0 || ctls_[i].param < 0) return i >= 0;
+      const int p = ctls_[i].param;
+      if (ev.button == 1) {
+        armed_ = p;
+        setState("learn", std::to_string(p).c_str());
+      } else if (ev.button == 3) {
+        for (auto& c : ccLive_) if (c == p) c = -1;
+        if (auto* pl = plugin()) for (int cc = 0; cc < 128; ++cc) if (pl->ccMapping(cc) == p) pl->mapCc(cc, -1);
+        setState("ccmap", tonic::ui::serializeCcMap(ccLive_).c_str());
+      }
+      repaint();
+      return true;
+    }
     if (ev.button == 3 && ev.press) {  // right click: reset
       if (i >= 0 && ctls_[i].param >= 0) commit(ctls_[i].param, layout_.params[static_cast<size_t>(ctls_[i].param)].def);
       return i >= 0;
@@ -114,8 +148,8 @@ class TonicDpfUI : public UI {
     const float mx = static_cast<float>(ev.pos.getX()) / s, my = static_cast<float>(ev.pos.getY()) / s;
     if (active_ < 0) {
       const int h = hit(mx, my);
-      const bool hb = inButton(mx, my);
-      if (h != hover_ || hb != hoverButton_) { hover_ = h; hoverButton_ = hb; repaint(); }
+      const bool hb = inButton(mx, my), hl = inLearnButton(mx, my);
+      if (h != hover_ || hb != hoverButton_ || hl != hoverLearn_) { hover_ = h; hoverButton_ = hb; hoverLearn_ = hl; repaint(); }
       return false;
     }
     const Ctl& c = ctls_[active_];
@@ -123,6 +157,27 @@ class TonicDpfUI : public UI {
     const float t = dragStart_ + (dragY_ - my) / (fine_ ? 600.f : 150.f);
     setValue(c.param, tonic::ui::fromNormalized(spec(c.param), t));
     return true;
+  }
+
+  // Poll the plugin (direct access) for learned bindings; persist them once a learn completes.
+  void uiIdle() override {
+    auto* pl = plugin();
+    if (!pl) return;
+    bool changed = false;
+    for (int cc = 0; cc < 128; ++cc) {
+      const int p = pl->ccMapping(cc);
+      if (ccLive_[static_cast<size_t>(cc)] != p) { ccLive_[static_cast<size_t>(cc)] = p; changed = true; }
+    }
+    if (armed_ >= 0 && !pl->isLearning() && !screenshotMode()) {
+      armed_ = -1;
+      setState("ccmap", tonic::ui::serializeCcMap(ccLive_).c_str());  // host saves it with the project
+      changed = true;
+    }
+    if (changed) repaint();
+  }
+
+  void stateChanged(const char* key, const char* value) override {
+    if (std::string(key) == "ccmap") { ccLive_ = tonic::ui::parseCcMap(value, static_cast<int>(layout_.params.size())); repaint(); }
   }
 
   bool onScroll(const ScrollEvent& ev) override {
@@ -185,8 +240,12 @@ class TonicDpfUI : public UI {
     label(cx, c.y + 108.f, upper(spec(c.param).name), 12, kInk, ALIGN_CENTER | ALIGN_MIDDLE);
     label(cx, c.y + 124.f, tonic::ui::formatValue(spec(c.param), values_[static_cast<size_t>(c.param)]), 11, kMute,
           ALIGN_CENTER | ALIGN_MIDDLE);
-    const int cc = tonic::ui::ccFor(layout_, c.param);
-    if (cc >= 0) label(cx, c.y + 139.f, "CC " + std::to_string(cc), 9, accent, ALIGN_CENTER | ALIGN_MIDDLE);
+    const std::string ccs = ccLabel(c.param);
+    if (!ccs.empty()) label(cx, c.y + 139.f, ccs, 9, accent, ALIGN_CENTER | ALIGN_MIDDLE);
+    if (learnMode_ && c.param == armed_) {  // armed for MIDI learn
+      beginPath(); circle(cx, cy, r + 12.f); strokeColor(rgb(kAccent[0])); strokeWidth(2.5f); stroke();
+      label(cx, c.y + 139.f, "MOVE A KNOB", 9, kAccent[0], ALIGN_CENTER | ALIGN_MIDDLE);
+    }
   }
 
   void drawSlider(const Ctl& c, bool hot) {
@@ -219,6 +278,23 @@ class TonicDpfUI : public UI {
     return -1;
   }
   static bool inButton(float x, float y) { return x >= kW - 120 && x < kW - 24 && y >= 16 && y < 46; }
+  static bool inLearnButton(float x, float y) { return x >= kW - 228 && x < kW - 132 && y >= 16 && y < 46; }
+  static bool screenshotMode() { const char* p = std::getenv("TONIC2_UI_PAGE"); return p && std::string(p) == "learn"; }
+  TonicDpfPlugin* plugin() const {
+#if DISTRHO_PLUGIN_WANT_DIRECT_ACCESS
+    return static_cast<TonicDpfPlugin*>(getPluginInstancePointer());
+#else
+    return nullptr;
+#endif
+  }
+  // "CC 74" (or "CC 74 +1" when several CCs drive the parameter), from the live map.
+  std::string ccLabel(int param) const {
+    int first = -1, more = 0;
+    for (int cc = 0; cc < 128; ++cc)
+      if (ccLive_[static_cast<size_t>(cc)] == param) { if (first < 0) first = cc; else ++more; }
+    if (first < 0) return {};
+    return "CC " + std::to_string(first) + (more ? " +" + std::to_string(more) : "");
+  }
 
   Color rgb(const Col& c) const { return Color(c.r, c.g, c.b); }
   void box(float x, float y, float w, float h, const Col& c, float radius) {
@@ -239,7 +315,9 @@ class TonicDpfUI : public UI {
   tonic::ui::Surface surface_;
   std::vector<float> values_;
   std::vector<Ctl> ctls_;
-  bool detail_ = false, fine_ = false, hoverButton_ = false;
+  bool detail_ = false, fine_ = false, hoverButton_ = false, hoverLearn_ = false, learnMode_ = false;
+  int armed_ = -1;
+  tonic::ui::CcMap ccLive_{};
   int active_ = -1, hover_ = -1, lastClick_ = -1;
   uint lastClickTime_ = 0;
   float dragY_ = 0.f, dragStart_ = 0.f;

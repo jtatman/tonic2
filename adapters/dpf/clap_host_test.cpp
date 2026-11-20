@@ -3,6 +3,7 @@
 // Usage: tonic2_clap_host_test path/to/plugin.clap [out.wav]
 #include <cmath>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -16,6 +17,7 @@
 #include "entry.h"
 #include "events.h"
 #include "ext/params.h"
+#include "ext/state.h"
 #include "host.h"
 #include "plugin-factory.h"
 #include "plugin.h"
@@ -109,6 +111,47 @@ void runProbe(const clap_plugin_t* plugin, const clap_param_info_t& level) {
   check(out[au - 1] == 1.f && out[au] == 0.25f && out[au + 49] == 0.25f,
         "automation applies from the start of its host block (DPF: block-accurate)",
         std::to_string(out[au - 1]) + " -> " + std::to_string(out[au]));
+
+  // CC bindings persist in plugin state: save, rebind CC 1 -> CC 20 in the saved text, load, verify.
+  auto* state = static_cast<const clap_plugin_state_t*>(plugin->get_extension(plugin, CLAP_EXT_STATE));
+  std::string saved;
+  clap_ostream_t os{&saved, [](const clap_ostream_t* s, const void* buf, uint64_t n) -> int64_t {
+                      static_cast<std::string*>(s->ctx)->append(static_cast<const char*>(buf), n);
+                      return static_cast<int64_t>(n);
+                    }};
+  const bool savedOk = state && state->save(plugin, &os);
+  const size_t at = saved.find("1=0");
+  check(savedOk && at != std::string::npos, "saved state contains the CC map (CC 1 -> level)", std::to_string(saved.size()) + " bytes");
+  if (!savedOk || at == std::string::npos) return;
+  std::string edited = saved;
+  edited.replace(at, 3, "20=0");
+  struct Reader { const std::string* s; size_t pos; } rd{&edited, 0};
+  clap_istream_t is{&rd, [](const clap_istream_t* s, void* buf, uint64_t n) -> int64_t {
+                      auto* r = static_cast<Reader*>(s->ctx);
+                      const size_t k = std::min<size_t>(static_cast<size_t>(n), r->s->size() - r->pos);
+                      std::memcpy(buf, r->s->data() + r->pos, k);
+                      r->pos += k;
+                      return static_cast<int64_t>(k);
+                    }};
+  check(state->load(plugin, &is), "load edited state", "ok");
+  EventList list;
+  clap_event_midi_t cc20{}, cc1{};
+  cc20.header = {sizeof(cc20), 10, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_MIDI, 0};
+  cc20.data[0] = 0xB0; cc20.data[1] = 20; cc20.data[2] = 127;
+  cc1.header = {sizeof(cc1), 50, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_MIDI, 0};
+  cc1.data[0] = 0xB0; cc1.data[1] = 1; cc1.data[2] = 0;
+  list.events = {&cc20.header, &cc1.header};
+  clap_input_events_t in{&list, EventList::size, EventList::get};
+  clap_output_events_t outEv{nullptr, tryPush};
+  clap_process_t proc{};
+  proc.frames_count = block;
+  proc.audio_outputs = &audioOut;
+  proc.audio_outputs_count = 1;
+  proc.in_events = &in;
+  proc.out_events = &outEv;
+  plugin->process(plugin, &proc);
+  check(l[9] == 0.25f && l[10] == 1.f && l[200] == 1.f, "after load: CC 20 drives level, CC 1 no longer does",
+        std::to_string(l[9]) + " -> " + std::to_string(l[10]) + ", " + std::to_string(l[200]));
 }
 
 }  // namespace

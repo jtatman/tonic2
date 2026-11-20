@@ -215,6 +215,12 @@ A minimal control surface instead of a panel full of knobs:
 |---|---|
 | ![main](docs/ui/ui_main.png) | ![detail](docs/ui/ui_detail.png) |
 
+**MIDI learn:** click LEARN, click a control, move a knob on your controller; right-click a control in learn mode to
+clear its CC. Bindings are saved with the project (plugin state `ccmap`, verified through a CLAP state round trip
+in the host test). When the UI runs in the plugin's process it shows learned bindings live.
+
+![learn](docs/ui/ui_learn.png)
+
 - **Main:** up to 8 knobs, matching an 8-knob MIDI controller. Parameters marked `UiPlace::Main` come first,
   then macros (marked with a dot), then CC-bound parameters (with a `CC nn` tag). Empty slots stay visible.
 - **Detail:** every visible parameter as a slider.

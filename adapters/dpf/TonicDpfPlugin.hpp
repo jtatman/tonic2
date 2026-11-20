@@ -11,6 +11,8 @@
 //   automation is block-accurate; MIDI CC stays sample-accurate.
 #pragma once
 
+#include <array>
+#include <atomic>
 #include <cctype>
 #include <cstring>
 #include <functional>
@@ -20,6 +22,7 @@
 #include "DistrhoPlugin.hpp"
 #include "tonic/dsl/patch.hpp"
 #include "tonic/engine/engine.hpp"
+#include "tonic/ui/ccmap.hpp"
 
 START_NAMESPACE_DISTRHO
 
@@ -38,10 +41,31 @@ class TonicDpfPlugin : public Plugin {
   using Build = std::function<void(tonic::dsl::Patch&)>;
   static constexpr int kMaxBlock = 512;
   static constexpr size_t kMaxEvents = 2048;
+#if DISTRHO_PLUGIN_WANT_STATE
+  static constexpr uint32_t kNumStates = 2;  // "ccmap" (saved with the project), "learn" (UI -> DSP command)
+#else
+  static constexpr uint32_t kNumStates = 0;
+#endif
+
+  // ---- direct access for the UI when it runs in the same process (all calls are lock-free) ----
+  void learnCc(int param) { engine_.learnCc(param); }
+  bool isLearning() const { return engine_.isLearning(); }
+  int ccMapping(int cc) const {
+    if (cc < 0 || cc >= 128) return -1;
+    return active_ ? engine_.ccMapping(cc) : ccCache_[static_cast<size_t>(cc)].load();
+  }
+  void mapCc(int cc, int param) {
+    if (cc < 0 || cc >= 128) return;
+    ccCache_[static_cast<size_t>(cc)].store(param);
+    if (active_) engine_.mapCc(cc, param);
+  }
 
   TonicDpfPlugin(Build build, TonicPluginInfo info)
-      : Plugin(static_cast<uint32_t>(layoutOf(build).params.size()), 0, 0),
+      : Plugin(static_cast<uint32_t>(layoutOf(build).params.size()), 0, kNumStates),
         build_(std::move(build)), info_(info), layout_(layoutOf(build_)) {
+    for (auto& c : ccCache_) c.store(-1);
+    for (const auto& b : layout_.ccBindings)
+      if (b.cc >= 0 && b.cc < 128) ccCache_[static_cast<size_t>(b.cc)].store(b.param);
     values_.reserve(layout_.params.size());
     for (const auto& p : layout_.params) values_.push_back(p.def);
     events_.reserve(kMaxEvents);
@@ -80,8 +104,47 @@ class TonicDpfPlugin : public Plugin {
     engine_.prepare(getSampleRate(), kMaxBlock, compiled.layout);
     if (compiled.graph) engine_.setGraph(std::move(compiled.graph));
     for (size_t i = 0; i < values_.size(); ++i) engine_.setParam(static_cast<int>(i), values_[i]);
+    for (int cc = 0; cc < 128; ++cc) engine_.mapCc(cc, ccCache_[static_cast<size_t>(cc)].load());  // restored or learned bindings
+    active_ = true;
   }
-  void deactivate() override { engine_.collectGarbage(); }
+  void deactivate() override {
+    snapshotCcMap();  // keep bindings learned while active
+    active_ = false;
+    engine_.collectGarbage();
+  }
+
+#if DISTRHO_PLUGIN_WANT_STATE
+  void initState(uint32_t index, State& s) override {
+    if (index == 0) {
+      s.key = "ccmap";
+      s.defaultValue = tonic::ui::serializeCcMap(cacheCopy()).c_str();
+      s.label = "MIDI CC map";
+      s.hints = kStateIsOnlyForDSP;
+    } else {
+      s.key = "learn";
+      s.defaultValue = "-1";
+      s.label = "MIDI learn";
+      s.hints = kStateIsOnlyForDSP;
+    }
+  }
+  void setState(const char* key, const char* value) override {
+    if (std::strcmp(key, "ccmap") == 0) {
+      const auto m = tonic::ui::parseCcMap(value, static_cast<int>(layout_.params.size()));
+      for (int cc = 0; cc < 128; ++cc) ccCache_[static_cast<size_t>(cc)].store(m[static_cast<size_t>(cc)]);
+      if (active_) for (int cc = 0; cc < 128; ++cc) engine_.mapCc(cc, m[static_cast<size_t>(cc)]);
+    } else if (std::strcmp(key, "learn") == 0) {
+      engine_.learnCc(std::atoi(value));  // -1 cancels
+    }
+  }
+#if DISTRHO_PLUGIN_WANT_FULL_STATE
+  String getState(const char* key) const override {
+    if (std::strcmp(key, "ccmap") != 0) return String("-1");
+    tonic::ui::CcMap m;
+    for (int cc = 0; cc < 128; ++cc) m[static_cast<size_t>(cc)] = ccMapping(cc);
+    return String(tonic::ui::serializeCcMap(m).c_str());
+  }
+#endif
+#endif
 
   void run(const float**, float** outputs, uint32_t frames, const MidiEvent* midi, uint32_t midiCount) override {
     events_.clear();  // capacity reserved in the constructor: no allocation here
@@ -101,6 +164,15 @@ class TonicDpfPlugin : public Plugin {
   }
 
  private:
+  tonic::ui::CcMap cacheCopy() const {
+    tonic::ui::CcMap m;
+    for (int cc = 0; cc < 128; ++cc) m[static_cast<size_t>(cc)] = ccCache_[static_cast<size_t>(cc)].load();
+    return m;
+  }
+  void snapshotCcMap() {
+    if (!active_) return;
+    for (int cc = 0; cc < 128; ++cc) ccCache_[static_cast<size_t>(cc)].store(engine_.ccMapping(cc));
+  }
   static tonic::engine::Layout layoutOf(const Build& build) {
     tonic::dsl::Patch p;
     build(p);
@@ -121,6 +193,10 @@ class TonicDpfPlugin : public Plugin {
   TonicPluginInfo info_;
   tonic::engine::Layout layout_;
   tonic::engine::Engine engine_;
+  // Bindings while inactive (from the layout, saved state, or the last session). Atomic: the host thread
+  // (setState) and the UI thread (ccMapping) may touch it concurrently.
+  std::array<std::atomic<int>, 128> ccCache_;
+  std::atomic<bool> active_{false};
   std::vector<float> values_;
   std::vector<tonic::engine::Event> events_;
   std::vector<std::string> symbols_;

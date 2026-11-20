@@ -103,17 +103,36 @@ void testAliasing() {
   Oscillator o; o.prepare(sr); o.setWaveform(Waveform::Saw); o.setFrequency(f0);
   std::vector<float> b(n); o.process(b.data(), int(n));
   const double blep = aliasDb(b, f0, sr);
-  check(blep < naive - 10.0, "saw aliasing PolyBLEP vs naive", fmt(blep) + " dB vs " + fmt(naive) + " dB");
-  // Thresholds reflect 2-sample PolyBLEP/BLAMP (steps ~-25 dB, corners ~-40 dB at 3.5 kHz);
-  // a future minBLEP oscillator should tighten these.
+  check(blep < naive - 30.0, "saw aliasing (default minBLEP) vs naive", fmt(blep) + " dB vs " + fmt(naive) + " dB");
+  // Saw and square use minBLEP by default (~-46 dB at 3.5 kHz); triangle uses PolyBLAMP (~-40 dB).
   o.setWaveform(Waveform::Square); o.reset();
   o.process(b.data(), int(n));
   const double sq = aliasDb(b, f0, sr);
-  check(sq < -22.0, "square aliasing @3.5 kHz", fmt(sq) + " dB");
+  check(sq < -40.0, "square aliasing (minBLEP) @3.5 kHz", fmt(sq) + " dB");
   o.setWaveform(Waveform::Triangle); o.reset();
   o.process(b.data(), int(n));
   const double tri = aliasDb(b, f0, sr);
   check(tri < -35.0, "triangle aliasing @3.5 kHz", fmt(tri) + " dB");
+}
+
+void testMinBlep() {
+  const double sr = 48000, f0 = 3517.3;
+  const size_t n = 16384;
+  auto alias = [&](Waveform w, Antialias a) {
+    Oscillator o; o.prepare(sr); o.setWaveform(w); o.setAntialias(a); o.setFrequency(f0);
+    std::vector<float> b(n); o.process(b.data(), int(n));
+    return aliasDb(b, f0, sr);
+  };
+  const double sawPoly = alias(Waveform::Saw, Antialias::PolyBlep), sawMin = alias(Waveform::Saw, Antialias::MinBlep);
+  const double sqPoly = alias(Waveform::Square, Antialias::PolyBlep), sqMin = alias(Waveform::Square, Antialias::MinBlep);
+  check(sawMin < sawPoly - 15.0, "minBLEP saw aliasing well below PolyBLEP", fmt(sawMin) + " vs " + fmt(sawPoly) + " dB");
+  check(sqMin < sqPoly - 15.0, "minBLEP square aliasing well below PolyBLEP", fmt(sqMin) + " vs " + fmt(sqPoly) + " dB");
+  Oscillator o; o.prepare(sr); o.setWaveform(Waveform::Saw); o.setFrequency(110);
+  std::vector<float> b(48000); o.process(b.data(), 48000);
+  double peak = 0, mean = 0;
+  for (float v : b) { peak = std::max(peak, double(std::fabs(v))); mean += v; }
+  mean /= b.size();
+  check(peak < 1.5 && std::fabs(mean) < 0.002, "minBLEP saw: min-phase overshoot bounded, no DC offset", "peak " + fmt(peak) + ", mean " + fmt(mean));
 }
 
 void testSvf() {
@@ -222,6 +241,7 @@ void testGolden() {
 int main() {
   testOscillatorFrequency();
   testAliasing();
+  testMinBlep();
   testSvf();
   testLadder();
   testAdsr();

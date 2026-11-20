@@ -2,9 +2,24 @@
 #   git submodule update --init third_party/DPF
 add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/DPF ${CMAKE_BINARY_DIR}/dpf)
 
-dpf_add_plugin(tonic2_poly
-  TARGETS vst3 clap lv2
-  FILES_DSP poly/PolyPlugin.cpp)
+option(TONIC2_DPF_UI "Build the plugin UI (needs OpenGL; on Linux also X11 dev headers)" ON)
+if(TONIC2_DPF_UI)
+  set(TONIC2_POLY_TARGETS vst3 clap lv2)
+  if(WIN32)
+    list(APPEND TONIC2_POLY_TARGETS vst2)  # testing only: tools/uishot screenshots the VST2 editor
+  endif()
+  dpf_add_plugin(tonic2_poly
+    TARGETS ${TONIC2_POLY_TARGETS}
+    UI_TYPE opengl
+    FILES_DSP poly/PolyPlugin.cpp
+    FILES_UI poly/PolyUI.cpp)
+  target_compile_definitions(tonic2_poly PUBLIC TONIC2_HAS_UI=1)
+else()
+  dpf_add_plugin(tonic2_poly
+    TARGETS vst3 clap lv2
+    FILES_DSP poly/PolyPlugin.cpp)
+  target_compile_definitions(tonic2_poly PUBLIC TONIC2_HAS_UI=0)
+endif()
 target_include_directories(tonic2_poly PUBLIC poly ${PROJECT_SOURCE_DIR}/examples)
 target_link_libraries(tonic2_poly PUBLIC tonic2)
 target_compile_features(tonic2_poly PUBLIC cxx_std_20)
@@ -30,3 +45,10 @@ foreach(name poly probe)
   endif()
   add_test(NAME clap_host_${name} COMMAND tonic2_clap_host_test ${bin})
 endforeach()
+
+# Windows: screenshot a plugin editor without a GUI host (opens the VST2 editor in a window).
+if(WIN32 AND TONIC2_DPF_UI)
+  add_executable(tonic2_uishot ${PROJECT_SOURCE_DIR}/tools/uishot.cpp)
+  target_link_libraries(tonic2_uishot PRIVATE user32 gdi32)
+  target_compile_definitions(tonic2_uishot PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()

@@ -90,10 +90,21 @@ class Patch {
 
   // --- parameters and macros ---
   Param param(std::string name, float min, float max, float def, float smoothSeconds = 0.02f) {
+    engine::ParamSpec spec;
+    spec.name = std::move(name);
+    spec.min = min;
+    spec.max = max;
+    spec.def = def;
+    spec.smoothSeconds = smoothSeconds;
+    return param(std::move(spec));
+  }
+  // Full spec: unit, log scale and UI placement as well.
+  Param param(engine::ParamSpec spec) {
     if (isVoice_) { fail("declare parameters on the outer patch and read them in a voice with use()"); return {}; }
     Param p;
-    p.def = def;
-    p.id = layout_.add({std::move(name), min, max, def, smoothSeconds});
+    p.def = spec.def;
+    const float def = spec.def;
+    p.id = layout_.add(std::move(spec));
     static_cast<Signal&>(p) = make(std::make_unique<graph::ParamSignalNode>(p.id, def), 1);
     return p;
   }

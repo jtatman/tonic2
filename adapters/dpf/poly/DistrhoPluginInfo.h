@@ -9,7 +9,15 @@
 #define DISTRHO_PLUGIN_BRAND_ID  Tnc2
 #define DISTRHO_PLUGIN_UNIQUE_ID TnPl
 
-#define DISTRHO_PLUGIN_HAS_UI          0
+// The build sets TONIC2_HAS_UI=0 when the UI is disabled (e.g. headless Linux without X11/GL headers).
+#ifndef TONIC2_HAS_UI
+#define TONIC2_HAS_UI 1
+#endif
+#define DISTRHO_PLUGIN_HAS_UI          TONIC2_HAS_UI
+#define DISTRHO_UI_USE_NANOVG          1
+#define DISTRHO_UI_USER_RESIZABLE      0
+#define DISTRHO_UI_DEFAULT_WIDTH       720
+#define DISTRHO_UI_DEFAULT_HEIGHT      380
 #define DISTRHO_PLUGIN_IS_RT_SAFE      1
 #define DISTRHO_PLUGIN_IS_SYNTH        1
 #define DISTRHO_PLUGIN_NUM_INPUTS      0

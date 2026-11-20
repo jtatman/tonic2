@@ -60,7 +60,7 @@ std::vector<float> run(engine::Engine& e, int frames, std::vector<Event> ev, int
 
 void testParamEventsSampleAccurate() {
   engine::Layout L;
-  const int p = L.add({"p", 0.f, 10.f, 1.f, 0.f});  // no smoothing
+  const int p = L.add("p", 0.f, 10.f, 1.f, 0.f);  // no smoothing
   engine::Engine e;
   e.prepare(kSr, kMax, L);
   e.setGraph(probe(ProbeNode::What::Param, p));
@@ -71,7 +71,7 @@ void testParamEventsSampleAccurate() {
 
 void testSmoothingAndUi() {
   engine::Layout L;
-  const int p = L.add({"p", 0.f, 1.f, 0.f, 0.01f});  // 10 ms
+  const int p = L.add("p", 0.f, 1.f, 0.f, 0.01f);  // 10 ms
   engine::Engine e;
   e.prepare(kSr, kMax, L);
   e.setGraph(probe(ProbeNode::What::Param, p));
@@ -86,8 +86,8 @@ void testSmoothingAndUi() {
 
 void testMacros() {
   engine::Layout L;
-  const int cutoff = L.add({"cutoff", 0.f, 1000.f, 100.f, 0.f});
-  const int macro = L.add({"macro", 0.f, 1.f, 0.f, 0.f});
+  const int cutoff = L.add("cutoff", 0.f, 1000.f, 100.f, 0.f);
+  const int macro = L.add("macro", 0.f, 1.f, 0.f, 0.f);
   L.macros.push_back({macro, {{cutoff, 0.f, 2000.f, 1.f}}});
   engine::Engine e;
   e.prepare(kSr, kMax, L);
@@ -129,9 +129,9 @@ void testNotes() {
 
 void testMidiCc() {
   engine::Layout L;
-  const int cut = L.add({"cutoff", 100.f, 1100.f, 100.f, 0.f});
-  const int m = L.add({"macro", 0.f, 1.f, 0.f, 0.f});
-  const int res = L.add({"res", 0.f, 1.f, 0.f, 0.f});
+  const int cut = L.add("cutoff", 100.f, 1100.f, 100.f, 0.f);
+  const int m = L.add("macro", 0.f, 1.f, 0.f, 0.f);
+  const int res = L.add("res", 0.f, 1.f, 0.f, 0.f);
   L.macros.push_back({m, {{res, 0.f, 0.8f, 1.f}}});
   L.ccBindings.push_back({74, cut});
   engine::Engine e;
@@ -158,7 +158,7 @@ void testMidiCc() {
 
 void testParamsSurviveGraphSwap() {
   engine::Layout L;
-  const int p = L.add({"p", 0.f, 1.f, 0.f, 0.f});
+  const int p = L.add("p", 0.f, 1.f, 0.f, 0.f);
   engine::Engine e;
   e.prepare(kSr, kMax, L);
   e.setGraph(probe(ProbeNode::What::Param, p));
@@ -187,7 +187,7 @@ std::vector<Event> phrase(int cutoff) {
 
 void testHostBlockIndependence() {
   engine::Layout L;
-  const int cutoff = L.add({"cutoff", 50.f, 10000.f, 800.f, 0.02f});
+  const int cutoff = L.add("cutoff", 50.f, 10000.f, 800.f, 0.02f);
   std::vector<std::vector<float>> results;
   for (int hb : {64, 1000, 37}) {
     engine::Engine e;
@@ -212,8 +212,8 @@ void testWavRoundTrip() {
 
 void testNoAllocations() {
   engine::Layout L;
-  const int cutoff = L.add({"cutoff", 50.f, 10000.f, 800.f, 0.02f});
-  const int m = L.add({"macro", 0.f, 1.f, 0.f, 0.02f});
+  const int cutoff = L.add("cutoff", 50.f, 10000.f, 800.f, 0.02f);
+  const int m = L.add("macro", 0.f, 1.f, 0.f, 0.02f);
   L.macros.push_back({m, {{cutoff, 0.f, 5000.f, 2.f}}});
   engine::Engine e;
   e.prepare(kSr, kMax, L);

@@ -56,6 +56,12 @@ if(TONIC2_BUILD_TESTS)
   target_compile_options(tonic2_mixer_tests PRIVATE ${TONIC2_WARN})
   add_test(NAME mixer_tests COMMAND tonic2_mixer_tests)
 
+  add_executable(tonic2_ui_tests tests/ui_tests.cpp)
+  target_link_libraries(tonic2_ui_tests PRIVATE tonic2)
+  target_include_directories(tonic2_ui_tests PRIVATE examples)
+  target_compile_options(tonic2_ui_tests PRIVATE ${TONIC2_WARN})
+  add_test(NAME ui_tests COMMAND tonic2_ui_tests)
+
   add_executable(tonic2_render tools/render.cpp)
   target_link_libraries(tonic2_render PRIVATE tonic2)
   target_include_directories(tonic2_render PRIVATE examples)

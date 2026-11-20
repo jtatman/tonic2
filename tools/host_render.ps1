@@ -24,7 +24,7 @@ if (-not (Test-Path $Plugin)) { throw "plugin not found: $Plugin (run tools\buil
 if (-not (Test-Path $SongEngine)) { throw "songengine host not found: $SongEngine" }
 
 $argList = @("-seed", $Seed, "-genre", $Genre, "-channels", "4", "-bars", "$Bars", "-wav", $Out)
-foreach ($role in "drums", "perc", "bass", "lead", "keys", "pad", "arp", "noise") { $argList += @("-plugin", "$role=$Plugin") }
+foreach ($role in "drums", "kick", "hats", "perc", "bass", "lead", "keys", "pad", "arp", "noise", "fx") { $argList += @("-plugin", "$role=$Plugin") }
 if (Test-Path $Out) { Remove-Item $Out }
 
 # DPF prints a soft assert ("outparamsptr != nullptr") each block because the host passes no output
@@ -36,6 +36,15 @@ $ErrorActionPreference = "Stop"
 $log | Where-Object { $_ -notmatch "outparamsptr|DistrhoPluginVST3\.cpp|^\s*\[dpf\]\s*$|RemoteException" } | Select-Object -Last 10
 if ($exit -ne 0) { throw "songengine exited with $exit" }
 if (-not (Test-Path $Out)) { throw "no output written" }
+
+# Every sequenced part must be played by the plugin under test; otherwise another synth (e.g. Vital on a
+# role we did not map) can make a broken plugin look fine.
+$pluginName = [IO.Path]::GetFileNameWithoutExtension($Plugin)
+$parts = $log | Where-Object { $_ -match "(\|--|``--) ch\d+ .* notes " -and $_ -notmatch "priority" }
+$foreign = $parts | Where-Object { $_ -notmatch [regex]::Escape($pluginName) }
+if (-not $parts) { throw "could not read the part routing from songengine's output" }
+if ($foreign) { $foreign | ForEach-Object { "not on the plugin: $_" }; throw "some parts are not played by $pluginName" }
+"all $(@($parts).Count) parts played by $pluginName"
 
 $peakLine = $log | Select-String -Pattern "peak ([0-9.]+)" | Select-Object -Last 1
 $peak = if ($peakLine) { [double]$peakLine.Matches[0].Groups[1].Value } else { -1 }

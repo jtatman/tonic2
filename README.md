@@ -167,8 +167,9 @@ powershell -ExecutionPolicy Bypass -File tools/build_windows.ps1   # build-win/b
 powershell -ExecutionPolicy Bypass -File tools/host_render.ps1     # render a song through the VST3 in a real host
 ```
 
-`host_render.ps1` drives the songengine Go VST3 host offline (`-plugin role=path.vst3` on every part) and
-checks the output level. It accepts `-Plugin` for any other VST3.
+`host_render.ps1` drives the songengine Go VST3 host offline (`-plugin role=path.vst3` on every role,
+including kick, hats and fx), checks from songengine's routing diagram that every part is played by the
+plugin under test, then checks the output level. It accepts `-Plugin` for any other VST3.
 
 - `TonicDpfPlugin` (generic): engine parameters become host parameters; MIDI notes become
   sample-accurate engine events; the patch is compiled in `activate()` at the host sample rate.
@@ -189,3 +190,22 @@ engine.learnCc(macro.id);        // MIDI learn: the next CC that arrives is boun
 - Host automation through DPF is block-accurate: DPF applies parameter changes at the start of the
   host block, and the engine smooths them. `tonic2_probe` (a test plugin whose output equals its parameter)
   checks both behaviours in the CLAP host test.
+
+## Plugin UI (`adapters/dpf/TonicDpfUI.hpp`, `include/tonic/ui/surface.hpp`)
+
+A minimal control surface instead of a panel full of knobs:
+
+| Main | Detail |
+|---|---|
+| ![main](docs/ui/ui_main.png) | ![detail](docs/ui/ui_detail.png) |
+
+- **Main:** up to 8 knobs, matching an 8-knob MIDI controller. Parameters marked `UiPlace::Main` come first,
+  then macros (marked with a dot), then CC-bound parameters (with a `CC nn` tag). Empty slots stay visible.
+- **Detail:** every visible parameter as a slider.
+- Drag knobs vertically (Shift = fine), scroll to nudge, double-click or right-click to reset.
+- Parameters carry a unit, log scaling and UI placement (`engine::ParamSpec::unit/log/ui`); the
+  selection and formatting logic lives in `tonic/ui/surface.hpp`, independent of any GUI toolkit.
+- The UI is generic: a plugin's `createUI()` passes the same patch build function as its DSP side.
+- Build without the UI (headless Linux) with `-DTONIC2_DPF_UI=OFF`. Screenshots on Windows:
+  `build-win/.../tonic2_uishot.exe build-win/bin/tonic2_poly-vst2.dll out.bmp` (`TONIC2_UI_PAGE=detail` for
+  the detail page).

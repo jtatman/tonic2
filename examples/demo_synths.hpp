@@ -84,17 +84,34 @@ inline void filteredNoise(dsl::Patch& p) {
   p.output((p.mix(bands) * (1.f + q * 0.05f) + bass * 0.05f) >> dsl::pan(0.f));
 }
 
-// Polyphonic synth: 8 voices with 2-voice unison, per-voice filter envelope, shared cutoff param and a
-// stereo delay on the summed voices.
+// Polyphonic synth: 8 voices with 2-voice unison, per-voice filter envelope, and a stereo delay. Parameters
+// carry units, log scaling and UI placement; "tone" and "bite" macros (CC 71, 72) and cutoff (CC 74) make
+// up the main surface of the plugin UI together with level.
 inline void polySynth(dsl::Patch& p) {
-  auto cutoff = p.param("cutoff", 100.f, 8000.f, 900.f, 0.05f);
+  using engine::ParamSpec;
+  using engine::UiPlace;
+  auto mk = [](const char* name, float min, float max, float def, const char* unit, bool log, UiPlace ui) {
+    ParamSpec s;
+    s.name = name; s.min = min; s.max = max; s.def = def; s.smoothSeconds = 0.05f; s.unit = unit; s.log = log; s.ui = ui;
+    return s;
+  };
+  auto cutoff = p.param(mk("cutoff", 100.f, 8000.f, 900.f, "Hz", true, UiPlace::Auto));
+  auto resonance = p.param(mk("resonance", 0.5f, 8.f, 1.2f, "", true, UiPlace::Detail));
+  auto envAmt = p.param(mk("env amount", 0.f, 6000.f, 2500.f, "Hz", false, UiPlace::Detail));
+  auto level = p.param(mk("level", -36.f, 0.f, -3.f, "dB", false, UiPlace::Main));
+  auto tone = p.param(mk("tone", 0.f, 1.f, 0.f, "", false, UiPlace::Auto));
+  auto bite = p.param(mk("bite", 0.f, 1.f, 0.f, "", false, UiPlace::Auto));
+  p.macro(tone, {{cutoff, 0.f, 3000.f, 2.f}, {envAmt, 0.f, 1500.f, 1.f}});
+  p.macro(bite, {{resonance, 0.f, 4.f, 1.f}, {envAmt, 0.f, 2000.f, 1.f}});
   p.midiCc(74, cutoff);
+  p.midiCc(71, tone);
+  p.midiCc(72, bite);
   auto voices = p.voices({8, dsl::VoiceMode::Poly, 2, 9.f}, [&](dsl::Patch& v) {
     auto env = v.adsr(0.01, 0.4, 0.5, 0.6);
     auto osc = v.saw(v.pitch()) * 0.5f + v.triangle(v.pitch() * 2.f) * 0.2f;
-    v.output(osc * env * v.velocity() * 0.12f >> dsl::lowpass(v.use(cutoff) + env * 2500.f, 1.2f));
+    v.output(osc * env * v.velocity() * 0.12f >> dsl::lowpass(v.use(cutoff) + env * v.use(envAmt), v.use(resonance)));
   });
-  p.output(voices >> dsl::pan(0.f) >> dsl::delay(0.33, 0.35f, 0.25f));
+  p.output(voices * p.dbToGain(level) >> dsl::pan(0.f) >> dsl::delay(0.33, 0.35f, 0.25f));
 }
 
 // A small mix: poly pad and mono bass in a "keys" group, a noise hat on its own strip, a delay return

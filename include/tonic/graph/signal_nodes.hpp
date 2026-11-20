@@ -144,12 +144,13 @@ class NoiseNode final : public Node {
   uint32_t seed_;
 };
 
-// Ladder: input 0 = signal (N ch), 1 = cutoff Hz, 2 = resonance 0..1.
+// Ladder: input 0 = signal (N ch), 1 = cutoff Hz, 2 = resonance 0..1. oversample = 1, 2 or 4.
 class ModLadderNode final : public Node {
  public:
-  ModLadderNode(int channels, double drive) : Node({channels, 1, 1}, {channels}), drive_(drive), f_(static_cast<size_t>(channels)) {}
+  ModLadderNode(int channels, double drive, int oversample = 1)
+      : Node({channels, 1, 1}, {channels}), drive_(drive), oversample_(oversample), f_(static_cast<size_t>(channels)) {}
   void prepare(double sr, int) override {
-    for (auto& f : f_) { f.prepare(sr); f.setDrive(drive_); f.reset(); }
+    for (auto& f : f_) { f.prepare(sr); f.setOversampling(oversample_); f.setDrive(drive_); f.reset(); }
     lastFc_ = lastRes_ = -1.f;
   }
   void process(const ProcessArgs& a) override {
@@ -163,6 +164,7 @@ class ModLadderNode final : public Node {
   }
  private:
   double drive_;
+  int oversample_;
   std::vector<dsp::Ladder> f_;
   float lastFc_ = -1.f, lastRes_ = -1.f;
 };

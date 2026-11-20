@@ -312,12 +312,16 @@ inline Signal max(Signal a, float b) { return a.patch() ? max(a, a.patch()->cons
 struct Ladder {
   Value cutoff, resonance;
   double drive;
+  int oversample;
   Signal apply(Signal in) const {
-    return in.patch()->effect(std::make_unique<graph::ModLadderNode>(in.channels(), drive), in, {cutoff, resonance},
+    return in.patch()->effect(std::make_unique<graph::ModLadderNode>(in.channels(), drive, oversample), in, {cutoff, resonance},
                               in.channels());
   }
 };
-inline Ladder ladder(Value cutoff, Value resonance = 0.f, double drive = 1.0) { return {cutoff, resonance, drive}; }
+// oversample: 1, 2 or 4 (worth it when drive or resonance pushes the saturation; adds a little latency).
+inline Ladder ladder(Value cutoff, Value resonance = 0.f, double drive = 1.0, int oversample = 1) {
+  return {cutoff, resonance, drive, oversample};
+}
 
 struct Svf {
   graph::ModSvfNode::Mode mode;

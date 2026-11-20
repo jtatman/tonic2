@@ -135,6 +135,57 @@ void testMinBlep() {
   check(peak < 1.5 && std::fabs(mean) < 0.002, "minBLEP saw: min-phase overshoot bounded, no DC offset", "peak " + fmt(peak) + ", mean " + fmt(mean));
 }
 
+void testOversampling() {
+  const double sr = 48000;
+  auto tone = [&](double hz, int n) {
+    std::vector<float> x(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) x[static_cast<size_t>(i)] = static_cast<float>(0.5 * std::sin(kTwoPi * hz * i / sr));
+    return x;
+  };
+  auto roundTrip = [&](int factor, const std::vector<float>& x) {
+    Oversampler os; os.prepare(factor);
+    std::vector<float> y(x.size());
+    float buf[4];
+    for (size_t i = 0; i < x.size(); ++i) { os.up(x[i], buf); y[i] = os.down(buf); }
+    return y;
+  };
+  auto rmsDb = [](const std::vector<float>& v, size_t from) {
+    double s = 0; for (size_t i = from; i < v.size(); ++i) s += double(v[i]) * v[i];
+    return 10.0 * std::log10(s / (v.size() - from));
+  };
+  for (int factor : {2, 4}) {
+    for (double hz : {1000.0, 18000.0}) {
+      auto x = tone(hz, 8192);
+      auto y = roundTrip(factor, x);
+      const double g = rmsDb(y, 1000) - rmsDb(x, 1000);
+      check(std::fabs(g) < 0.1, "oversampling " + std::to_string(factor) + "x passband gain at " + fmt(hz) + " Hz", fmt(g) + " dB");
+    }
+  }
+  // 2x round trip is the input delayed by exactly latency() samples (band-limited input).
+  Oversampler o2; o2.prepare(2);
+  const int lat = static_cast<int>(o2.latency());
+  auto x = tone(3000, 4096), y = roundTrip(2, x);
+  for (size_t i = 0; i < x.size(); ++i) x[i] += 0.3f * static_cast<float>(std::sin(kTwoPi * 11000.0 * i / sr));
+  y = roundTrip(2, x);
+  double err = 0, ref = 0;
+  for (size_t i = 500; i < x.size(); ++i) { const double d = y[i] - x[i - static_cast<size_t>(lat)]; err += d * d; ref += double(x[i]) * x[i]; }
+  check(o2.latency() == 31.0 && 10.0 * std::log10(err / ref) < -60.0, "2x round trip = input delayed by latency()",
+        "latency " + fmt(o2.latency()) + ", error " + fmt(10.0 * std::log10(err / ref)) + " dB");
+  Oversampler o4; o4.prepare(4);
+  check(o4.latency() == 46.5, "4x latency", fmt(o4.latency()));
+
+  // A hard-driven ladder aliases at 1x; oversampling must reduce it.
+  auto drivenAlias = [&](int factor) {
+    Ladder l; l.prepare(sr); l.setOversampling(factor); l.setCutoff(12000); l.setResonance(0.3); l.setDrive(8.0);
+    const double f0 = 4321.0;
+    std::vector<float> b(16384);
+    for (size_t i = 0; i < b.size(); ++i) b[i] = l.process(static_cast<float>(0.8 * std::sin(kTwoPi * f0 * i / sr)));
+    return aliasDb(b, f0, sr);
+  };
+  const double a1 = drivenAlias(1), a2 = drivenAlias(2), a4 = drivenAlias(4);
+  check(a2 < a1 - 10.0 && a4 < a2, "driven ladder: oversampling reduces aliasing", fmt(a1) + " -> " + fmt(a2) + " -> " + fmt(a4) + " dB");
+}
+
 void testSvf() {
   const double sr = 48000;
   Svf f; f.prepare(sr); f.setCutoff(1000); f.setQ(0.70710678);
@@ -242,6 +293,7 @@ int main() {
   testOscillatorFrequency();
   testAliasing();
   testMinBlep();
+  testOversampling();
   testSvf();
   testLadder();
   testAdsr();

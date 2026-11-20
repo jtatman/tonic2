@@ -3,6 +3,7 @@
 #pragma once
 
 #include "math.hpp"
+#include "oversampling.hpp"
 
 namespace tonic::dsp {
 
@@ -45,12 +46,26 @@ struct Svf {
 // resonance 0..1 maps to feedback 0..4 (self-oscillation near 1). drive > 1 saturates the input.
 struct Ladder {
   void prepare(double sampleRate) { sampleRate_ = sampleRate; update(); }
-  void reset() { s_[0] = s_[1] = s_[2] = s_[3] = 0.0; }
+  void reset() { s_[0] = s_[1] = s_[2] = s_[3] = 0.0; os_.prepare(os_.factor()); }
+  // Run the filter at 1x, 2x or 4x the sample rate. Oversampling keeps the saturation's new harmonics from
+  // aliasing when drive or resonance is high; it adds latency() samples of delay.
+  void setOversampling(int factor) { os_.prepare(factor); update(); }
+  int oversampling() const { return os_.factor(); }
+  double latency() const { return os_.latency(); }
   void setCutoff(double hz) { cutoff_ = hz; update(); }
   void setResonance(double r) { k_ = 4.0 * std::clamp(r, 0.0, 1.0); }
   void setDrive(double d) { drive_ = d > 0.01 ? d : 0.01; }
 
   float process(float in) {
+    if (os_.factor() == 1) return processCore(in);
+    float buf[4];
+    os_.up(in, buf);
+    for (int i = 0; i < os_.factor(); ++i) buf[i] = processCore(buf[i]);
+    return os_.down(buf);
+  }
+
+ private:
+  float processCore(float in) {
     const double G2 = G_ * G_, G4 = G2 * G2;
     const double oneMinusG = 1.0 - G_;
     // Contribution of the stage states to the 4th stage output.
@@ -71,12 +86,12 @@ struct Ladder {
     return static_cast<float>(u * (1.0 + 0.5 * k_) / drive_);
   }
 
- private:
   void update() {
-    const double g = tptGain(cutoff_, sampleRate_);
+    const double g = tptGain(cutoff_, sampleRate_ * os_.factor());
     G_ = g / (1.0 + g);
   }
   double sampleRate_ = 48000.0, cutoff_ = 1000.0, k_ = 0.0, drive_ = 1.0, G_ = 0.0;
+  Oversampler os_;
   double s_[4] = {0, 0, 0, 0};
 };
 

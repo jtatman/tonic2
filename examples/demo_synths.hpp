@@ -34,7 +34,7 @@ inline void monoSynth(dsl::Patch& p) {
   p.midiCc(74, bright);  // brightness macro on CC 74 (the usual "cutoff" knob)
   auto env = p.adsr(0.005, 0.25, 0.4, 0.3);
   auto osc = p.saw(p.pitch()) + p.square(p.pitch() * 0.5f, 0.3f) * 0.6f;
-  p.output(osc * env * 0.35f >> dsl::ladder(cutoff + env * 2500.f, resonance, 1.5) >> dsl::pan(0.f));
+  p.output(osc * env * 0.35f >> dsl::ladder(cutoff + env * 2500.f, resonance, 1.5, /*oversample=*/2) >> dsl::pan(0.f));
 }
 
 // Tonic 1 SineSumSynth: 10 sines spaced by fourths, all following one "pitch" control.

@@ -21,7 +21,8 @@ mixer, and a DPF plugin adapter; see the [design document](https://github.com/jt
 |---|---|
 | `oscillator.hpp` | Band-limited sine, saw, square/PWM (minBLEP by default, PolyBLEP optional), triangle (PolyBLAMP) |
 | `minblep.hpp` | Minimum-phase band-limited step table, generated at runtime (Blackman sinc at 0.9 Nyquist, real cepstrum) |
-| `filters.hpp` | ZDF state-variable filter (LP/BP/HP/notch), ZDF 4-pole ladder with saturation |
+| `filters.hpp` | ZDF state-variable filter (LP/BP/HP/notch), ZDF 4-pole ladder with saturation (optional 2x/4x oversampling) |
+| `oversampling.hpp` | 2x/4x linear-phase halfband FIR oversampler (63-tap Kaiser, ~80 dB stopband, flat to ~20 kHz) |
 | `envelope.hpp` | Analog-style exponential ADSR with exact segment times |
 | `smoother.hpp` | One-pole and linear parameter smoothers |
 | `noise.hpp` | Deterministic xorshift white noise |

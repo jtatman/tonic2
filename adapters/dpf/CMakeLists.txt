@@ -1,5 +1,14 @@
 # DPF plugin adapter (VST3, CLAP, LV2). Enabled with -DTONIC2_BUILD_DPF=ON; needs the DPF submodule:
 #   git submodule update --init third_party/DPF
+# DPF downloads the Khronos GL headers at configure time; seed them from the copy in this repo instead.
+foreach(h GL/glext.h KHR/khrplatform.h)
+  if(NOT EXISTS "${PROJECT_SOURCE_DIR}/third_party/DPF/khronos/${h}")
+    get_filename_component(dir "${PROJECT_SOURCE_DIR}/third_party/DPF/khronos/${h}" DIRECTORY)
+    file(COPY "${PROJECT_SOURCE_DIR}/third_party/khronos/${h}" DESTINATION "${dir}")
+  endif()
+endforeach()
+# DPF relies on GNU extensions (e.g. typeof in its Linux web-view code); tonic2 itself builds without them.
+set(CMAKE_CXX_EXTENSIONS ON)
 add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/DPF ${CMAKE_BINARY_DIR}/dpf)
 
 option(TONIC2_DPF_UI "Build the plugin UI (needs OpenGL; on Linux also X11 dev headers)" ON)

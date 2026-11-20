@@ -181,6 +181,24 @@ class Patch {
     connect(trigger, o, 0);
     return o;
   }
+  // Nearest note of a scale (degrees in semitones above root, e.g. {0,2,3,5,7,10}).
+  Signal snapToScale(Signal midi, std::vector<int> degrees, int root = 0) {
+    Signal o = make(std::make_unique<graph::SnapToScaleNode>(std::move(degrees), root), 1);
+    connect(midi, o, 0);
+    return o;
+  }
+  // One of several mono signals, chosen by a (rounded) index signal.
+  Signal select(Signal index, const std::vector<Value>& choices) {
+    if (choices.empty()) { fail("select needs at least one choice"); return constant(0.f); }
+    Signal o = make(std::make_unique<graph::SelectNode>(static_cast<int>(choices.size())), 1);
+    connect(index, o, 0);
+    for (size_t k = 0; k < choices.size(); ++k) {
+      Signal c = toSignal(choices[k]);
+      if (c.channels() != 1) { fail("select choices must be mono"); return o; }
+      connect(c, o, static_cast<int>(k) + 1);
+    }
+    return o;
+  }
   // A new random value in [min, max] on each trigger.
   Signal sampleHold(Signal trigger, Value min, Value max, uint32_t seed = 1) {
     Signal o = make(std::make_unique<graph::SampleHoldNode>(seed), 1);
@@ -190,13 +208,18 @@ class Patch {
     return o;
   }
   // Envelope driven by the played notes (gate + retrigger).
-  Signal adsr(double attack, double decay, double sustain, double release) {
+  // Times in seconds and sustain 0..1 may be numbers or signals (parameters, macros, modulation).
+  Signal adsr(Value attack, Value decay, Value sustain, Value release) {
     return adsr(attack, decay, sustain, release, gate(), trigger());
   }
-  Signal adsr(double attack, double decay, double sustain, double release, Signal gateSig, Signal triggerSig) {
-    Signal e = make(std::make_unique<graph::ModEnvelopeNode>(attack, decay, sustain, release), 1);
+  Signal adsr(Value attack, Value decay, Value sustain, Value release, Signal gateSig, Signal triggerSig) {
+    Signal e = make(std::make_unique<graph::ModEnvelopeNode>(), 1);
     connect(gateSig, e, 0);
     connect(triggerSig, e, 1);
+    connect(toSignal(attack), e, 2);
+    connect(toSignal(decay), e, 3);
+    connect(toSignal(sustain), e, 4);
+    connect(toSignal(release), e, 5);
     return e;
   }
 
@@ -434,6 +457,15 @@ inline Compressor limiter(Value ceiling = -1.f) { return {ceiling, 1000.f, 0.000
 inline Compressor ducker(Signal sidechain, Value threshold = -30.f, Value ratio = 6.f) {
   return {threshold, ratio, 0.005f, 0.15f, 0.f, sidechain};
 }
+
+// One-pole lag (Tonic 1 .smoothed()): x >> smooth(0.05).
+struct Smooth {
+  Value seconds;
+  Signal apply(Signal in) const {
+    return in.patch()->effect(std::make_unique<graph::SmoothNode>(in.channels()), in, {seconds}, in.channels());
+  }
+};
+inline Smooth smooth(Value seconds = 0.02f) { return {seconds}; }
 
 template <class E>
 concept Effect = requires(const E& e, Signal s) {

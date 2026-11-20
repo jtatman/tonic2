@@ -140,26 +140,38 @@ inline void mixedSong(dsl::Patch& p) {
   p.output(mix.master({.gainDb = -1.f}));
 }
 
-// Tonic 1 SimpleStepSeqSynth. Differences: the 8 pitches and cutoffs are a fixed pattern on the original
-// scale (0,2,3,5,7,10) instead of random per-step parameters; tempo and transpose stay parameters.
+// Tonic 1 SimpleStepSeqSynth: 8 steps, each with its own pitch and cutoff parameter, chosen by the step index
+// and snapped to the scale (0,2,3,5,7,10) before transposing. Difference: initial step pitches are a fixed
+// pattern instead of random (renders stay reproducible).
 inline void stepSeq(dsl::Patch& p) {
-  auto tempo = p.param("tempo", 50.f, 300.f, 100.f, 0.f);
-  auto transpose = p.param("transpose", -6.f, 6.f, 0.f, 0.f);
-  auto clock = p.metro(tempo, 4.0);  // sixteenths
-  auto note = p.stepper(clock, {48, 51, 55, 58, 60, 58, 55, 53}) + transpose;
-  auto cutoff = p.stepper(clock, {500, 900, 300, 1200, 700, 400, 1000, 600});
+  auto mk = [](std::string name, float min, float max, float def, engine::UiPlace ui) {
+    engine::ParamSpec s;
+    s.name = std::move(name); s.min = min; s.max = max; s.def = def; s.smoothSeconds = 0.f; s.ui = ui;
+    return s;
+  };
+  auto tempo = p.param(mk("tempo", 50.f, 300.f, 100.f, engine::UiPlace::Main));
+  auto transpose = p.param(mk("transpose", -6.f, 6.f, 0.f, engine::UiPlace::Main));
+  const float pitchInit[8] = {48.f, 61.f, 55.f, 70.f, 40.f, 66.f, 52.f, 75.f};
+  std::vector<dsl::Value> pitches, cutoffs;
+  for (int i = 0; i < 8; ++i) {
+    pitches.push_back(p.param(mk("step" + std::to_string(i) + "Pitch", 10.f, 80.f, pitchInit[i], engine::UiPlace::Detail)));
+    cutoffs.push_back(p.param(mk("step" + std::to_string(i) + "Cutoff", 30.f, 1500.f, 500.f, engine::UiPlace::Detail)));
+  }
+  auto clock = p.metro(tempo, 4.0);  // sixteenths (Tonic 1: metro at 4 x tempo)
+  auto step = p.stepper(clock, {0, 1, 2, 3, 4, 5, 6, 7});
+  auto note = transpose + p.snapToScale(p.select(step, pitches), {0, 2, 3, 5, 7, 10});
   auto env = p.adsr(0.01, 0.1, 0.0, 0.0, p.constant(1.f), clock);  // retriggered decay per step
-  p.output(p.square(p.mtof(note)) * env * 0.25f >> dsl::ladder(cutoff, 0.05f, 1.0) >> dsl::pan(0.f));
+  p.output(p.square(p.mtof(note)) * env * 0.25f >> dsl::ladder(p.select(step, cutoffs), 0.05f, 1.0) >> dsl::pan(0.f));
 }
 
-// Tonic 1 StereoDelayTestSynth. Differences: one LFO modulates both delay times (right = left x 1.1); the
-// envelope decay is fixed at 0.12 s (envelope times are not modulatable yet, so the "decay" parameter is omitted).
+// Tonic 1 StereoDelayTestSynth. Difference: one LFO modulates both delay times (right = left x 1.1).
 inline void stereoDelay(dsl::Patch& p) {
+  auto decay = p.param("decay", 0.01f, 1.f, 0.12f, 0.f);
   auto freq = p.param("freq", 0.f, 400.f, 120.f, 0.f);
   auto randAmt = p.param("frequencyRandomAmount", 0.f, 800.f, 300.f, 0.f);
   auto clock = p.metro(100.f);
   auto tone = p.square(p.sampleHold(clock, 0.f, 1.f, 5) * randAmt + 100.f + freq) * p.sine(50.f);
-  auto env = p.adsr(0.01, 0.12, 0.0, 0.0, p.constant(1.f), clock);
+  auto env = p.adsr(0.01, decay, 0.0, 0.0, p.constant(1.f), clock);
   auto time = 0.5f + p.sine(0.2f) * 0.01f;
   auto filterHz = (p.sine(0.01f) + 1.f) * 200.f + 225.f;
   p.output((tone * env >> dsl::modDelay(time, 0.3f, 0.2f, false, 1.1f) >> dsl::ladder(filterHz, 0.5f, 1.0)) * 0.3f);

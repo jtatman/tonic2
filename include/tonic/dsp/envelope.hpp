@@ -32,7 +32,9 @@ struct Adsr {
         out_ = decayBase_ + out_ * decayCoef_;
         if (out_ <= sustain_) { out_ = sustain_; stage_ = Stage::Sustain; }
         break;
-      case Stage::Sustain: out_ = sustain_; break;
+      case Stage::Sustain:  // glide to the sustain level so changing it while held never clicks
+        out_ = sustain_ + (out_ - sustain_) * decayCoef_;
+        break;
       case Stage::Release:
         out_ = releaseBase_ + out_ * releaseCoef_;
         if (out_ <= 0.0) { out_ = 0.0; stage_ = Stage::Idle; }
@@ -49,6 +51,7 @@ struct Adsr {
     return samples <= 0.0 ? 0.0 : std::exp(-std::log((1.0 + ratio) / ratio) / samples);
   }
   void recompute() {
+    if (stage_ == Stage::Decay && out_ < sustain_) stage_ = Stage::Sustain;  // sustain raised mid-decay: glide up
     attackCoef_ = coef(attack_ * sampleRate_, kRatioA);
     attackBase_ = (1.0 + kRatioA) * (1.0 - attackCoef_);
     decayCoef_ = coef(decay_ * sampleRate_, kRatioDR);

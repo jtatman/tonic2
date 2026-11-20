@@ -102,6 +102,10 @@ engine.setParam(cutoff, 2000.f);                              // UI thread, smoo
 - Effects apply with `>>`: `ladder(cutoff, resonance, drive)`, `lowpass/highpass/bandpass/notch(cutoff, q)`,
   `pan(position)`, `delay(seconds, feedback, mix)`. Every setting accepts a float or a signal, so
   anything can be modulated at audio rate.
+- Envelope times and sustain accept numbers or signals: `p.adsr(attackParam, 0.1, sustainMacro, 0.3)`; changing
+  sustain while a note is held glides instead of clicking.
+- Utilities: `x >> dsl::smooth(seconds)` (Tonic 1 `.smoothed()`), `p.snapToScale(midi, {0,2,3,5,7,10}, root)`,
+  `p.select(index, {a, b, c})` (Tonic 1 ControlSwitcher).
 - Ported Tonic 1 units: `pinkNoise`, `lfNoise(rate)`, `metro(bpm, division)`, `stepper(trigger, {values})`,
   `sampleHold(trigger, min, max)`; effects `modDelay(time, feedback, mix, pingPong)`, `crush(bits, rate)`,
   `reverb(size, decay, damping, mix)`, `compressor(...)`, `limiter(ceiling)`, `ducker(sidechain)`.

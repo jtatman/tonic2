@@ -4,6 +4,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -196,15 +197,21 @@ class ModSvfNode final : public Node {
   float lastFc_ = -1.f, lastQ_ = -1.f;
 };
 
-// ADSR: input 0 = gate, input 1 = trigger (retrigger while the gate stays open).
+// ADSR: inputs 0 = gate, 1 = trigger (retrigger while the gate stays open), 2..5 = attack, decay (s),
+// sustain (0..1), release (s). Times may be modulated; coefficients are recomputed only when they change.
 class ModEnvelopeNode final : public Node {
  public:
-  ModEnvelopeNode(double a, double d, double s, double r) : Node({1, 1}, {1}), a_(a), d_(d), s_(s), r_(r) {}
-  void prepare(double sr, int) override { env_.prepare(sr); env_.set(a_, d_, s_, r_); env_.reset(); open_ = false; }
+  ModEnvelopeNode() : Node({1, 1, 1, 1, 1, 1}, {1}) {}
+  void prepare(double sr, int) override { env_.prepare(sr); env_.reset(); open_ = false; last_[0] = -1.f; }
   void process(const ProcessArgs& a) override {
     const float *gate = a.input(0, 0), *trig = a.input(1, 0);
+    const float *at = a.input(2, 0), *de = a.input(3, 0), *su = a.input(4, 0), *re = a.input(5, 0);
     float* out = a.output(0, 0);
     for (int i = 0; i < a.numFrames; ++i) {
+      if (at[i] != last_[0] || de[i] != last_[1] || su[i] != last_[2] || re[i] != last_[3]) {
+        last_[0] = at[i]; last_[1] = de[i]; last_[2] = su[i]; last_[3] = re[i];
+        env_.set(std::max(0.f, at[i]), std::max(0.f, de[i]), std::clamp(su[i], 0.f, 1.f), std::max(0.f, re[i]));
+      }
       const bool g = gate[i] > 0.f;
       if (trig[i] > 0.f || (g && !open_)) env_.noteOn();
       else if (!g && open_) env_.noteOff();
@@ -214,7 +221,7 @@ class ModEnvelopeNode final : public Node {
   }
  private:
   dsp::Adsr env_;
-  double a_, d_, s_, r_;
+  float last_[4] = {-1.f, -1.f, -1.f, -1.f};
   bool open_ = false;
 };
 
@@ -249,6 +256,72 @@ class DelayNode final : public Node {
   float fb_, mix_;
   size_t len_ = 1, pos_ = 0;
   std::vector<std::vector<float>> lines_;
+};
+
+// One-pole lag smoother (Tonic 1 .smoothed()). Inputs: 0 = signal (N ch), 1 = time constant (s).
+class SmoothNode final : public Node {
+ public:
+  explicit SmoothNode(int channels) : Node({channels, 1}, {channels}), y_(static_cast<size_t>(channels), 0.f) {}
+  void prepare(double sr, int) override { sr_ = sr; lastT_ = -1.f; primed_ = false; }
+  void process(const ProcessArgs& a) override {
+    const float* t = a.input(1, 0);
+    if (!primed_) { for (size_t c = 0; c < y_.size(); ++c) y_[c] = a.input(0, static_cast<int>(c))[0]; primed_ = true; }
+    for (int i = 0; i < a.numFrames; ++i) {
+      if (t[i] != lastT_) { lastT_ = t[i]; k_ = t[i] > 0.f ? 1.f - static_cast<float>(std::exp(-1.0 / (t[i] * sr_))) : 1.f; }
+      for (size_t c = 0; c < y_.size(); ++c) {
+        y_[c] += k_ * (a.input(0, static_cast<int>(c))[i] - y_[c]);
+        a.output(0, static_cast<int>(c))[i] = y_[c];
+      }
+    }
+  }
+ private:
+  std::vector<float> y_;
+  double sr_ = 48000.0;
+  float lastT_ = -1.f, k_ = 1.f;
+  bool primed_ = false;
+};
+
+// Snap a MIDI note signal to the nearest note of a scale (Tonic 1 ControlSnapToScale). Scale degrees are
+// semitones 0..11 above `root`; ties go down. Input 0 = MIDI note (fractional allowed).
+class SnapToScaleNode final : public Node {
+ public:
+  SnapToScaleNode(std::vector<int> degrees, int root) : Node({1}, {1}), root_(root) {
+    for (int d : degrees) allowed_[static_cast<size_t>(((d % 12) + 12) % 12)] = true;
+    bool any = false;
+    for (bool b : allowed_) any |= b;
+    if (!any) allowed_.fill(true);
+  }
+  void process(const ProcessArgs& a) override {
+    for (int i = 0; i < a.numFrames; ++i) a.output(0, 0)[i] = snap(a.input(0, 0)[i]);
+  }
+ private:
+  float snap(float note) const {
+    const int base = static_cast<int>(std::floor(note));
+    float best = static_cast<float>(base), bestDist = 1e9f;
+    for (int n = base - 6; n <= base + 7; ++n) {
+      const int pc = (((n - root_) % 12) + 12) % 12;
+      const float dist = std::fabs(note - static_cast<float>(n));
+      if (allowed_[static_cast<size_t>(pc)] && dist < bestDist) { bestDist = dist; best = static_cast<float>(n); }
+    }
+    return best;
+  }
+  std::array<bool, 12> allowed_{};
+  int root_;
+};
+
+// Select one of N mono inputs by index (Tonic 1 ControlSwitcher). Input 0 = index (rounded, clamped),
+// inputs 1..N = choices.
+class SelectNode final : public Node {
+ public:
+  explicit SelectNode(int n) : Node(std::vector<int>(static_cast<size_t>(n) + 1, 1), {1}), n_(n) {}
+  void process(const ProcessArgs& a) override {
+    for (int i = 0; i < a.numFrames; ++i) {
+      const int k = std::clamp(static_cast<int>(std::lround(a.input(0, 0)[i])), 0, n_ - 1);
+      a.output(0, 0)[i] = a.input(k + 1, 0)[i];
+    }
+  }
+ private:
+  int n_;
 };
 
 }  // namespace tonic::graph

@@ -167,6 +167,55 @@ void testPortedUnits() {
         "metro + stepper sequence (sixteenths at 120 bpm)", fmt(so[0][6000]) + ", " + fmt(so[0][24000]));
 }
 
+void testUtilities() {
+  // Attack time set by a parameter (event before the note).
+  dsl::Patch a;
+  auto att = a.param("attack", 0.001f, 2.f, 0.5f, 0.f);
+  a.output(a.adsr(att, 0.1, 1.0, 0.1) + 0.f);
+  auto ao = renderPatch(a, 1, 48000, {Event::param(0, att.id, 0.1f), Event::noteOn(10, 60)});
+  int peakAt = 0;
+  while (peakAt < 48000 && ao[0][static_cast<size_t>(peakAt)] < 1.0f) ++peakAt;  // attack ends exactly at 1.0
+  check(!ao.empty() && std::abs(peakAt - 10 - 4800) <= 3, "modulated attack time (0.5 s -> 0.1 s)", std::to_string(peakAt - 10) + " samples");
+
+  // Changing sustain while a note is held glides instead of jumping.
+  dsl::Patch s;
+  auto sus = s.param("sustain", 0.f, 1.f, 0.2f, 0.f);
+  s.output(s.adsr(0.005, 0.05, sus, 0.1) + 0.f);
+  auto so = renderPatch(s, 1, 48000, {Event::noteOn(0, 60), Event::param(24000, sus.id, 0.8f)});
+  float maxStep = 0.f;
+  for (int i = 24000; i < 30000; ++i) maxStep = std::max(maxStep, std::fabs(so[0][static_cast<size_t>(i)] - so[0][static_cast<size_t>(i) - 1]));
+  check(!so.empty() && maxStep < 0.01f && std::fabs(so[0][47999] - 0.8f) < 1e-3f, "sustain change while held glides (no click)",
+        "max step " + fmt(maxStep) + ", final " + fmt(so[0][47999]));
+
+  // Smoother: 63% after one time constant.
+  dsl::Patch m;
+  auto x = m.param("x", 0.f, 1.f, 0.f, 0.f);
+  m.output(x >> dsl::smooth(0.01f));
+  auto mo = renderPatch(m, 1, 2000, {Event::param(100, x.id, 1.f)});
+  check(!mo.empty() && std::fabs(mo[0][100 + 479] - 0.632f) < 0.01f, "smooth(): 63% after one time constant", fmt(mo[0][579]));
+
+  // Snap to scale (minor pentatonic 0,3,5,7,10): nearest note, ties go down.
+  const float in[4] = {61.f, 62.f, 66.f, 68.6f}, want[4] = {60.f, 63.f, 65.f, 70.f};
+  bool snapOk = true;
+  std::string got;
+  for (int k = 0; k < 4; ++k) {
+    dsl::Patch q;
+    q.output(q.snapToScale(q.constant(in[k]), {0, 3, 5, 7, 10}));
+    auto qo = renderPatch(q, 1, 16);
+    snapOk &= !qo.empty() && qo[0][5] == want[k];
+    got += (qo.empty() ? std::string("?") : fmt(qo[0][5])) + " ";
+  }
+  check(snapOk, "snapToScale: 61->60, 62->63, 66->65 (tie down), 68.6->70", got);
+
+  // Select by index (clamped).
+  dsl::Patch c;
+  auto idx = c.param("i", -5.f, 10.f, 0.f, 0.f);
+  c.output(c.select(idx, {10.f, 20.f, 30.f}));
+  auto co = renderPatch(c, 1, 400, {Event::param(100, idx.id, 2.f), Event::param(200, idx.id, 9.f), Event::param(300, idx.id, -3.f)});
+  check(!co.empty() && co[0][50] == 10.f && co[0][150] == 30.f && co[0][250] == 30.f && co[0][350] == 10.f,
+        "select: index picks inputs, clamped", fmt(co[0][150]) + ", " + fmt(co[0][350]));
+}
+
 void testDemoSynths() {
   for (const auto& d : demos::all()) {
     dsl::Patch p;
@@ -214,6 +263,7 @@ int main() {
   testEnvelopeModulatesCutoff();
   testErrors();
   testPortedUnits();
+  testUtilities();
   testDemoSynths();
   std::printf("\n%d failure(s)\n", failures);
   return failures == 0 ? 0 : 1;

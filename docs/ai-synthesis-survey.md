@@ -150,7 +150,7 @@ work to another thread and adds latency. That matches the split in this document
 
 ## 7. Proposed tonic2 work, in order
 
-1. **Sound-matching harness** (`tools/match`): spectral distance plus a CMA-ES or genetic search over
+1. **Sound-matching harness** (`tools/match`, done: `include/tonic/analysis/`, `tonic2_match`): spectral distance plus a CMA-ES or genetic search over
    `Layout`/macros, driving the offline renderer. No ML dependencies. It creates the evaluation set and
    dataset generator that everything else reuses.
 2. **Patch agent:** a small CLI that takes a text prompt and asks an LLM for a `Layout` JSON (later a DSL

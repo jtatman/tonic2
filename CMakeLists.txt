@@ -69,10 +69,23 @@ if(TONIC2_BUILD_TESTS)
     add_test(NAME ${t}_tests COMMAND tonic2_${t}_tests)
   endforeach()
 
+  add_executable(tonic2_match_tests tests/match_tests.cpp)
+  target_link_libraries(tonic2_match_tests PRIVATE tonic2 Threads::Threads)
+  target_include_directories(tonic2_match_tests PRIVATE examples)
+  target_compile_options(tonic2_match_tests PRIVATE ${TONIC2_WARN})
+  add_test(NAME match_tests COMMAND tonic2_match_tests)
+
   add_executable(tonic2_render tools/render.cpp)
   target_link_libraries(tonic2_render PRIVATE tonic2)
   target_include_directories(tonic2_render PRIVATE examples)
   target_compile_options(tonic2_render PRIVATE ${TONIC2_WARN})
+
+  add_executable(tonic2_match tools/match.cpp)
+  target_link_libraries(tonic2_match PRIVATE tonic2 Threads::Threads)
+  target_include_directories(tonic2_match PRIVATE examples)
+  target_compile_options(tonic2_match PRIVATE ${TONIC2_WARN})
+  add_test(NAME match_cli COMMAND tonic2_match --demo mono --truth cutoff=3000,resonance=0.5
+           --params cutoff,resonance --evals 60 --seconds 0.5 --threads 2)
 
   add_executable(tonic2_golden tools/golden.cpp)
   target_link_libraries(tonic2_golden PRIVATE tonic2)

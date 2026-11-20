@@ -254,3 +254,24 @@ build-win\adapters\standalone\Release\tonic2_play.exe --null --notes --seconds 1
 - On macOS and Linux the DPF `jack` target also builds `tonic2_poly` as a standalone app with the plugin UI
   (JACK or native audio). On Windows/MSVC DPF's native fallback is unavailable, so use `tonic2_play` there.
 - ASIO is not enabled: Steinberg's ASIO SDK is GPLv3 or proprietary, which would change the license of the binary.
+
+## Sound matching (`include/tonic/analysis/`, `tools/match.cpp`)
+
+Finds parameter values that make a patch sound like a target recording, with no machine-learning
+dependencies (step 1 of the [AI synthesis survey](docs/ai-synthesis-survey.md)).
+
+- `spectral.hpp`: FFT and a multi-resolution STFT distance (spectral convergence plus log-magnitude L1
+  at FFT sizes 256, 1024 and 4096), the loss used in DDSP and most sound-matching papers.
+- `cmaes.hpp`: full-covariance CMA-ES over the unit box, with seeded, reproducible randomness and parallel evaluation.
+- `match.hpp`: renders the patch offline with its note script and searches the chosen parameters
+  through their normalised (log where declared) ranges. Each candidate gets a fresh engine.
+
+```bash
+tonic2_render poly target.wav    # or any float WAV written by a tonic2 tool
+tonic2_match --demo poly --target target.wav --params "cutoff,resonance,env amount,level" --json best.json --out best.wav
+tonic2_match --demo poly --truth "cutoff=2000,resonance=3,env amount=800,level=-9" --params "cutoff,resonance,env amount,level"
+```
+
+The last command recovers all four values (1.99 kHz, 2.85, 797 Hz, -8.9 dB) in 400 renders, about
+40 s on 6 threads. `tests/match_tests.cpp` checks the FFT, the distance, CMA-ES on sphere, corner and
+Rosenbrock problems, determinism, and recovery of the mono demo's cutoff and resonance.

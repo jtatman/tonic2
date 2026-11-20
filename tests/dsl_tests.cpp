@@ -139,6 +139,34 @@ void testErrors() {
   }
 }
 
+void testPortedUnits() {
+  // Reverb tail: sound continues after a short burst ends.
+  dsl::Patch r;
+  auto burst = r.noise(3) * r.adsr(0.001, 0.02, 0.0, 0.0, r.constant(1.f), r.metro(30.f));
+  r.output(burst >> dsl::reverb(0.6f, 2.0f, 8000.f, 1.0f));
+  auto ro = renderPatch(r, 2, 48000);
+  double tail = 0;
+  for (int i = 24000; i < 48000; ++i) tail = std::max(tail, double(std::fabs(ro[0][static_cast<size_t>(i)])));
+  check(!ro.empty() && tail > 1e-3, "reverb: tail continues after the burst", "peak in tail " + fmt(tail));
+
+  // Ducker: a loud sidechain pulls the music down.
+  dsl::Patch d;
+  auto kick = d.sine(60.f) * d.adsr(0.001, 0.15, 0.0, 0.0, d.constant(1.f), d.metro(120.f));
+  d.output(d.saw(220.f) * 0.3f >> dsl::ducker(kick, -30.f, 8.f));
+  auto dO = renderPatch(d, 1, 48000);
+  double justAfter = 0, late = 0;
+  for (int i = 100; i < 1200; ++i) justAfter = std::max(justAfter, double(std::fabs(dO[0][static_cast<size_t>(i)])));
+  for (int i = 20000; i < 23000; ++i) late = std::max(late, double(std::fabs(dO[0][static_cast<size_t>(i)])));
+  check(!dO.empty() && justAfter < late * 0.7, "ducker: music dips while the sidechain hits", fmt(justAfter) + " vs " + fmt(late));
+
+  // Metro + stepper drive pitch: the sequence repeats every 4 steps.
+  dsl::Patch s;
+  s.output(s.stepper(s.metro(120.f, 4.0), {1.f, 2.f, 3.f, 4.f}) + 0.f);
+  auto so = renderPatch(s, 1, 48000);
+  check(!so.empty() && so[0][0] == 1.f && so[0][6000] == 2.f && so[0][18000] == 4.f && so[0][24000] == 1.f,
+        "metro + stepper sequence (sixteenths at 120 bpm)", fmt(so[0][6000]) + ", " + fmt(so[0][24000]));
+}
+
 void testDemoSynths() {
   for (const auto& d : demos::all()) {
     dsl::Patch p;
@@ -185,6 +213,7 @@ int main() {
   testFmDepthZeroIsPlainSine();
   testEnvelopeModulatesCutoff();
   testErrors();
+  testPortedUnits();
   testDemoSynths();
   std::printf("\n%d failure(s)\n", failures);
   return failures == 0 ? 0 : 1;

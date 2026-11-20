@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "../engine/params.hpp"
+#include "../graph/fx_nodes.hpp"
 #include "../graph/graph.hpp"
 #include "../graph/nodes.hpp"
 #include "../graph/signal_nodes.hpp"
@@ -161,6 +162,33 @@ class Patch {
   Signal square(Value hz, Value pulseWidth = 0.5f) { return osc(dsp::Waveform::Square, hz, pulseWidth); }
   Signal triangle(Value hz) { return osc(dsp::Waveform::Triangle, hz, 0.5f); }
   Signal noise(uint32_t seed = 1) { return make(std::make_unique<graph::NoiseNode>(seed), 1); }
+  Signal pinkNoise(uint32_t seed = 1) { return make(std::make_unique<graph::PinkNoiseNode>(seed), 1); }
+  // Random modulation, -1..1: a new value `rate` times per second, ramped (smooth) or held.
+  Signal lfNoise(Value rate, bool smooth = true, uint32_t seed = 1) {
+    Signal o = make(std::make_unique<graph::LfNoiseNode>(seed, smooth), 1);
+    connect(toSignal(rate), o, 0);
+    return o;
+  }
+  // Tempo clock: a trigger every 1/division beat (division 4 = sixteenths).
+  Signal metro(Value bpm, double division = 1.0) {
+    Signal o = make(std::make_unique<graph::MetroNode>(division), 1);
+    connect(toSignal(bpm), o, 0);
+    return o;
+  }
+  // Step sequencer: the next value on each trigger (up to 64 steps, wrapping).
+  Signal stepper(Signal trigger, std::vector<float> values) {
+    Signal o = make(std::make_unique<graph::StepperNode>(std::move(values)), 1);
+    connect(trigger, o, 0);
+    return o;
+  }
+  // A new random value in [min, max] on each trigger.
+  Signal sampleHold(Signal trigger, Value min, Value max, uint32_t seed = 1) {
+    Signal o = make(std::make_unique<graph::SampleHoldNode>(seed), 1);
+    connect(trigger, o, 0);
+    connect(toSignal(min), o, 1);
+    connect(toSignal(max), o, 2);
+    return o;
+  }
   // Envelope driven by the played notes (gate + retrigger).
   Signal adsr(double attack, double decay, double sustain, double release) {
     return adsr(attack, decay, sustain, release, gate(), trigger());
@@ -352,6 +380,60 @@ struct Delay {
   }
 };
 inline Delay delay(double seconds, float feedback = 0.3f, float mix = 0.3f) { return {seconds, feedback, mix}; }
+
+// Stereo feedback delay with modulatable time (seconds); ping-pong alternates echoes left/right.
+struct ModDelay {
+  Value time, feedback, mix;
+  double maxSeconds;
+  bool pingPong;
+  float rightRatio;
+  Signal apply(Signal in) const {
+    return in.patch()->effect(std::make_unique<graph::ModDelayNode>(maxSeconds, pingPong, rightRatio), in, {time, feedback, mix}, 2);
+  }
+};
+inline ModDelay modDelay(Value time, Value feedback = 0.35f, Value mix = 0.3f, bool pingPong = false,
+                         float rightRatio = 1.f, double maxSeconds = 2.0) {
+  return {time, feedback, mix, maxSeconds, pingPong, rightRatio};
+}
+
+// Bit depth (1..24) and sample-rate (Hz) reduction.
+struct Crush {
+  Value bits, rate;
+  Signal apply(Signal in) const {
+    return in.patch()->effect(std::make_unique<graph::CrushNode>(in.channels()), in, {bits, rate}, in.channels());
+  }
+};
+inline Crush crush(Value bits, Value rate = 48000.f) { return {bits, rate}; }
+
+// Stereo FDN reverb: size 0..1, decay (s), damping (Hz), mix (wet amount).
+struct Reverb {
+  Value size, decay, damping, mix;
+  Signal apply(Signal in) const {
+    return in.patch()->effect(std::make_unique<graph::ReverbNode>(), in, {size, decay, damping, mix}, 2);
+  }
+};
+inline Reverb reverb(Value size = 0.5f, Value decay = 1.8f, Value damping = 8000.f, Value mix = 0.25f) {
+  return {size, decay, damping, mix};
+}
+
+// Compressor / limiter (linked across channels). Set `sidechain` to duck from another signal.
+struct Compressor {
+  Value threshold = -18.f, ratio = 4.f, attack = 0.005f, release = 0.1f, makeup = 0.f;
+  Signal sidechain;
+  Signal apply(Signal in) const {
+    const bool sc = sidechain.valid();
+    return in.patch()->effect(std::make_unique<graph::CompressorNode>(in.channels(), sc), in,
+                              {sc ? Value(sidechain) : Value(0.f), threshold, ratio, attack, release, makeup}, in.channels());
+  }
+};
+inline Compressor compressor(Value threshold = -18.f, Value ratio = 4.f, Value attack = 0.005f, Value release = 0.1f,
+                             Value makeup = 0.f) {
+  return {threshold, ratio, attack, release, makeup, {}};
+}
+inline Compressor limiter(Value ceiling = -1.f) { return {ceiling, 1000.f, 0.0005f, 0.08f, 0.f, {}}; }
+inline Compressor ducker(Signal sidechain, Value threshold = -30.f, Value ratio = 6.f) {
+  return {threshold, ratio, 0.005f, 0.15f, 0.f, sidechain};
+}
 
 template <class E>
 concept Effect = requires(const E& e, Signal s) {

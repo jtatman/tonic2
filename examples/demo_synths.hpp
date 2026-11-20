@@ -63,15 +63,14 @@ inline void fmDrone(dsl::Patch& p) {
   p.output(out >> dsl::pan(0.f));
 }
 
-// Tonic 1 FilteredNoiseSynth, simplified. Differences: white instead of pink noise; band centres are
-// not floored to whole semitones; tremolo rates are fixed instead of random; the random-metro "swell"
-// on the bass is a constant.
+// Tonic 1 FilteredNoiseSynth, simplified. Differences: band centres are not floored to whole semitones;
+// tremolo rates are fixed instead of random; the random-metro "swell" on the bass is a constant.
 inline void filteredNoise(dsl::Patch& p) {
   const float midi[] = {-24.f, 0.f, 3.f, 7.f, 10.f};
   const float tremoloHz[] = {0.13f, 0.21f, 0.17f, 0.29f, 0.11f};
   auto cutoff = p.param("cutoff", 0.f, 1.f, 0.5f);
   auto q = p.param("Q", 0.7f, 20.f, 5.f);
-  auto noise = p.noise(7);
+  auto noise = p.pinkNoise(7);
   std::vector<dsl::Signal> bands;
   for (int i = 0; i < 5; ++i) {
     auto centre = p.mtof(cutoff * 100.f + midi[i]);
@@ -141,8 +140,35 @@ inline void mixedSong(dsl::Patch& p) {
   p.output(mix.master({.gainDb = -1.f}));
 }
 
+// Tonic 1 SimpleStepSeqSynth. Differences: the 8 pitches and cutoffs are a fixed pattern on the original
+// scale (0,2,3,5,7,10) instead of random per-step parameters; tempo and transpose stay parameters.
+inline void stepSeq(dsl::Patch& p) {
+  auto tempo = p.param("tempo", 50.f, 300.f, 100.f, 0.f);
+  auto transpose = p.param("transpose", -6.f, 6.f, 0.f, 0.f);
+  auto clock = p.metro(tempo, 4.0);  // sixteenths
+  auto note = p.stepper(clock, {48, 51, 55, 58, 60, 58, 55, 53}) + transpose;
+  auto cutoff = p.stepper(clock, {500, 900, 300, 1200, 700, 400, 1000, 600});
+  auto env = p.adsr(0.01, 0.1, 0.0, 0.0, p.constant(1.f), clock);  // retriggered decay per step
+  p.output(p.square(p.mtof(note)) * env * 0.25f >> dsl::ladder(cutoff, 0.05f, 1.0) >> dsl::pan(0.f));
+}
+
+// Tonic 1 StereoDelayTestSynth. Differences: one LFO modulates both delay times (right = left x 1.1); the
+// envelope decay is fixed at 0.12 s (envelope times are not modulatable yet, so the "decay" parameter is omitted).
+inline void stereoDelay(dsl::Patch& p) {
+  auto freq = p.param("freq", 0.f, 400.f, 120.f, 0.f);
+  auto randAmt = p.param("frequencyRandomAmount", 0.f, 800.f, 300.f, 0.f);
+  auto clock = p.metro(100.f);
+  auto tone = p.square(p.sampleHold(clock, 0.f, 1.f, 5) * randAmt + 100.f + freq) * p.sine(50.f);
+  auto env = p.adsr(0.01, 0.12, 0.0, 0.0, p.constant(1.f), clock);
+  auto time = 0.5f + p.sine(0.2f) * 0.01f;
+  auto filterHz = (p.sine(0.01f) + 1.f) * 200.f + 225.f;
+  p.output((tone * env >> dsl::modDelay(time, 0.3f, 0.2f, false, 1.1f) >> dsl::ladder(filterHz, 0.5f, 1.0)) * 0.3f);
+}
+
 inline std::vector<Demo> all() {
   return {
+      {"stepseq", stepSeq, [](double) { return std::vector<Event>{}; }, 4.0},
+      {"stereodelay", stereoDelay, [](double) { return std::vector<Event>{}; }, 5.0},
       {"mixed", mixedSong,
        [](double sr) {
          std::vector<Event> ev;

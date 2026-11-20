@@ -25,7 +25,11 @@ mixer, and a DPF plugin adapter; see the [design document](https://github.com/jt
 | `oversampling.hpp` | 2x/4x linear-phase halfband FIR oversampler (63-tap Kaiser, ~80 dB stopband, flat to ~20 kHz) |
 | `envelope.hpp` | Analog-style exponential ADSR with exact segment times |
 | `smoother.hpp` | One-pole and linear parameter smoothers |
-| `noise.hpp` | Deterministic xorshift white noise |
+| `noise.hpp` | Deterministic xorshift white noise, pink noise (Kellet) |
+| `sequencing.hpp` | Metro (tempo clock), step sequencer, sample & hold, LFNoise (stepped or ramped) |
+| `delay.hpp` | Fractional delay line (cubic), stereo feedback delay with ping-pong, bitcrusher |
+| `reverb.hpp` | 8-line FDN reverb (Hadamard feedback, RT60 decay, damping, size) |
+| `dynamics.hpp` | Compressor / limiter (peak-envelope detector, soft knee, attack/release, sidechain) |
 | `math.hpp` | Helpers (Pade tanh, dB, MIDI to Hz, TPT gain) |
 
 Kernel rules: plain structs, no virtual functions, no allocation after `prepare()`, no global state,
@@ -98,6 +102,9 @@ engine.setParam(cutoff, 2000.f);                              // UI thread, smoo
 - Effects apply with `>>`: `ladder(cutoff, resonance, drive)`, `lowpass/highpass/bandpass/notch(cutoff, q)`,
   `pan(position)`, `delay(seconds, feedback, mix)`. Every setting accepts a float or a signal, so
   anything can be modulated at audio rate.
+- Ported Tonic 1 units: `pinkNoise`, `lfNoise(rate)`, `metro(bpm, division)`, `stepper(trigger, {values})`,
+  `sampleHold(trigger, min, max)`; effects `modDelay(time, feedback, mix, pingPong)`, `crush(bits, rate)`,
+  `reverb(size, decay, damping, mix)`, `compressor(...)`, `limiter(ceiling)`, `ducker(sidechain)`.
 - Mistakes (channel mismatch, signals from another patch, missing output) are reported by `compile()`.
 - `>>` binds looser than `+` and `*`: `a + b >> fx` filters the sum; prefer `(a + b) >> fx`.
 

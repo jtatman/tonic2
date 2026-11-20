@@ -62,6 +62,13 @@ if(TONIC2_BUILD_TESTS)
   target_compile_options(tonic2_ui_tests PRIVATE ${TONIC2_WARN})
   add_test(NAME ui_tests COMMAND tonic2_ui_tests)
 
+  foreach(t units fx)
+    add_executable(tonic2_${t}_tests tests/${t}_tests.cpp)
+    target_link_libraries(tonic2_${t}_tests PRIVATE tonic2)
+    target_compile_options(tonic2_${t}_tests PRIVATE ${TONIC2_WARN})
+    add_test(NAME ${t}_tests COMMAND tonic2_${t}_tests)
+  endforeach()
+
   add_executable(tonic2_render tools/render.cpp)
   target_link_libraries(tonic2_render PRIVATE tonic2)
   target_include_directories(tonic2_render PRIVATE examples)

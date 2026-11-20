@@ -9,3 +9,4 @@ build/
 .beads/proxieddb/
 *.gate.lock*
 build-win/
+build-wsl/

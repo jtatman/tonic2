@@ -47,12 +47,12 @@ jobs:
           submodules: recursive
       - name: Linux UI dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgl-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libdbus-1-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libgl-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libdbus-1-dev libasound2-dev pkg-config
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTONIC2_BUILD_DPF=ON -DTONIC2_BUILD_TESTS=OFF
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTONIC2_BUILD_DPF=ON -DTONIC2_BUILD_TESTS=OFF -DTONIC2_BUILD_STANDALONE=ON
       - name: Build VST3 / CLAP / LV2
         run: cmake --build build --config Release --parallel
-      - name: CLAP host test
+      - name: CLAP host test + standalone self-test (null audio)
         run: ctest --test-dir build -C Release --output-on-failure
       - uses: actions/upload-artifact@v7
         with:

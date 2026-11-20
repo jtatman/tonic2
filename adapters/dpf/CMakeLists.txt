@@ -13,7 +13,12 @@ add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/DPF ${CMAKE_BINARY_DIR}/dpf)
 
 option(TONIC2_DPF_UI "Build the plugin UI (needs OpenGL; on Linux also X11 dev headers)" ON)
 if(TONIC2_DPF_UI)
+  # jack = standalone app: JACK when a server runs, otherwise native audio + MIDI (WASAPI/WinMM,
+  # CoreAudio/CoreMIDI, ALSA/Pulse) through DPF's bundled RtAudio/RtMidi.
   set(TONIC2_POLY_TARGETS vst3 clap lv2)
+  if(NOT MSVC)  # DPF's native-audio fallback is MinGW-only on Windows; there use tonic2_play instead
+    list(APPEND TONIC2_POLY_TARGETS jack)
+  endif()
   if(WIN32)
     list(APPEND TONIC2_POLY_TARGETS vst2)  # testing only: tools/uishot screenshots the VST2 editor
   endif()

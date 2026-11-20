@@ -231,3 +231,23 @@ in the host test). When the UI runs in the plugin's process it shows learned bin
 - Build without the UI (headless Linux) with `-DTONIC2_DPF_UI=OFF`. Screenshots on Windows:
   `build-win/.../tonic2_uishot.exe build-win/bin/tonic2_poly-vst2.dll out.bmp` (`TONIC2_UI_PAGE=detail` for
   the detail page).
+
+## Standalone player (`adapters/standalone/play.cpp`)
+
+Play any demo patch on an audio device with live MIDI input, no plugin host needed:
+
+```powershell
+build-win\adapters\standalone\Release\tonic2_play.exe --list              # audio outputs and MIDI inputs
+build-win\adapters\standalone\Release\tonic2_play.exe --demo poly --midi 0
+build-win\adapters\standalone\Release\tonic2_play.exe --demo mono --audio 0 --midi all
+build-win\adapters\standalone\Release\tonic2_play.exe --null --notes --seconds 1   # silent self-test
+```
+
+- Audio through [miniaudio](https://github.com/mackron/miniaudio) (public domain / MIT-0): WASAPI, CoreAudio,
+  ALSA/PulseAudio, JACK. MIDI through RtMidi (bundled with DPF): WinMM, CoreMIDI, ALSA. Notes, CC (with the
+  patch's CC bindings), pitch wheel and channels are passed to the engine via a lock-free queue.
+- Build with `-DTONIC2_BUILD_STANDALONE=ON` (on by default in `tools/build_windows.ps1`).
+- Verified end to end on Windows: songengine sent a song's MIDI into a loopMIDI port and `tonic2_play` rendered it.
+- On macOS and Linux the DPF `jack` target also builds `tonic2_poly` as a standalone app with the plugin UI
+  (JACK or native audio). On Windows/MSVC DPF's native fallback is unavailable, so use `tonic2_play` there.
+- ASIO is not enabled: Steinberg's ASIO SDK is GPLv3 or proprietary, which would change the license of the binary.

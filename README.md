@@ -15,6 +15,9 @@ auto c = p.compile(48000, 512);   // c.graph, c.layout, c.error
 **Status: M7 (plugins).** Phase 1 complete: DSP, graph, engine, params/macros, patching syntax, voices,
 mixer, and a DPF plugin adapter; see the [design document](https://github.com/jtatman/Tonic/blob/phase1-design/docs/phase1-core-design.md).
 
+For where machine learning could plug in (sound matching, text-to-patch, neural nodes), see the
+[AI synthesis survey](docs/ai-synthesis-survey.md).
+
 ## DSP kernels (`include/tonic/dsp/`, header-only)
 
 | Header | Contents |

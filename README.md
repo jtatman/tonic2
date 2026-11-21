@@ -275,3 +275,28 @@ tonic2_match --demo poly --truth "cutoff=2000,resonance=3,env amount=800,level=-
 The last command recovers all four values (1.99 kHz, 2.85, 797 Hz, -8.9 dB) in 400 renders, about
 40 s on 6 threads. `tests/match_tests.cpp` checks the FFT, the distance, CMA-ES on sphere, corner and
 Rosenbrock problems, determinism, and recovery of the mono demo's cutoff and resonance.
+
+## Text-to-patch agent (`tools/patch_agent/`)
+
+Describe a sound in words and Claude programs a demo patch to match (step 2 of the
+[AI synthesis survey](docs/ai-synthesis-survey.md)). It runs as a loop:
+
+1. `tonic2_render --layout <demo>` prints the demo's description and parameters (ranges, units, which
+   parameters each macro drives) as JSON.
+2. Claude Opus 5.5 proposes a value for every parameter. A JSON schema built from the layout
+   constrains the reply (structured outputs), and out-of-range values are clamped and reported back.
+3. `tonic2_render <demo> out.wav --set "name=value,..." --features` renders the values and measures
+   level, spectral centroid and rolloff, flatness, band balance, attack, sustain and tail
+   (`include/tonic/analysis/features.hpp`). The model can't hear, so these numbers are its feedback.
+4. Claude revises or reports done, for up to `--rounds` rounds.
+
+```bash
+pip install -r tools/patch_agent/requirements.txt   # the anthropic SDK
+export ANTHROPIC_API_KEY=...                         # or `ant auth login`
+python tools/patch_agent/patch_agent.py "warm evolving pad with a slow attack" --demo poly --out pad
+# -> pad.json ({"params": {...}} like tonic2_match), pad.wav, pad_rounds/ (every render)
+```
+
+Server-side refusal fallback is enabled (`fallbacks="default"`); effort defaults to `medium`
+(`--effort` to change it). `test_patch_agent.py` runs the loop with a scripted fake client, against a
+fake renderer and against real `tonic2_render` output, so ctest needs neither the SDK nor network access.

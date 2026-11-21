@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "demo_synths.hpp"
+#include "tonic/analysis/features.hpp"
 #include "tonic/analysis/match.hpp"
 
 using namespace tonic;
@@ -91,6 +92,31 @@ void testCmaes() {
         "CMA-ES is deterministic for a seed, with 1 or 4 threads", "");
 }
 
+void testFeatures() {
+  const double sr = 48000.0;
+  const int n = 48000;
+  const auto tone = sine(1000, sr, n);
+  NormalSource normal(5);
+  std::vector<float> noise(static_cast<size_t>(n)), pluck(static_cast<size_t>(n));
+  for (int i = 0; i < n; ++i) {
+    noise[static_cast<size_t>(i)] = static_cast<float>(0.1 * normal());
+    pluck[static_cast<size_t>(i)] = tone[static_cast<size_t>(i)] * static_cast<float>(std::exp(-i / (0.05 * sr)));
+  }
+  const auto ft = computeFeatures(tone, sr), fn = computeFeatures(noise, sr), fp = computeFeatures(pluck, sr);
+  check(std::fabs(ft.centroidHz - 1000.0) < 30.0, "1 kHz sine: centroid near 1 kHz", fmt(ft.centroidHz));
+  check(std::fabs(ft.rmsDb - toDb(0.5 / std::sqrt(2.0))) < 0.1 && std::fabs(ft.peakDb - toDb(0.5)) < 0.1, "sine level: peak and RMS",
+        fmt(ft.peakDb) + " / " + fmt(ft.rmsDb));
+  check(ft.flatness < 0.01 && fn.flatness > 0.5, "flatness: sine near 0, white noise high", fmt(ft.flatness) + " / " + fmt(fn.flatness));
+  check(fn.centroidHz > 8000.0 && fn.bandHigh > 0.5, "white noise: bright, most energy above 8 kHz", fmt(fn.centroidHz) + " Hz");
+  const double bands = ft.bandLow + ft.bandLowMid + ft.bandHighMid + ft.bandHigh;
+  check(std::fabs(bands - 1.0) < 1e-9 && ft.bandLowMid > 0.99, "band shares sum to 1; 1 kHz lands in 200 Hz-2 kHz", fmt(ft.bandLowMid));
+  check(ft.sustainRatio > 0.95 && fp.sustainRatio < 0.05, "sustain: steady tone near 1, pluck near 0", fmt(ft.sustainRatio) + " / " + fmt(fp.sustainRatio));
+  check(fp.attackMs <= 10.0 && fp.tailDb < -60.0 && ft.tailDb > -1.0, "pluck: fast attack, silent tail; steady tone: full tail",
+        fmt(fp.attackMs) + " ms, " + fmt(fp.tailDb) + " dB / " + fmt(ft.tailDb) + " dB");
+  const auto json = toJson(ft);
+  check(json.front() == '{' && json.find("\"centroid_hz\"") != std::string::npos, "features serialise to JSON", json.substr(0, 40));
+}
+
 // Render the mono demo with known cutoff and resonance, then search for them from the defaults.
 void testRecovery() {
   const auto demoList = demos::all();
@@ -133,6 +159,7 @@ int main() {
   testFft();
   testDistance();
   testCmaes();
+  testFeatures();
   testRecovery();
   std::printf("\n%d failure(s)\n", failures);
   return failures == 0 ? 0 : 1;

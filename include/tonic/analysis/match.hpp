@@ -44,8 +44,9 @@ inline int paramId(const engine::Layout& layout, const std::string& name) {
 }
 
 // Renders the spec with parameters `ids` set to `values` (in parameter units) from the first sample.
-// Returns the mono mix, or an empty vector if the patch does not compile.
-inline std::vector<float> renderWith(const MatchSpec& spec, const std::vector<int>& ids, const std::vector<float>& values) {
+// Returns stereo channels, or an empty vector if the patch does not compile.
+inline std::vector<std::vector<float>> renderStereoWith(const MatchSpec& spec, const std::vector<int>& ids,
+                                                        const std::vector<float>& values) {
   dsl::Patch patch;
   spec.build(patch);
   auto compiled = patch.compile(spec.sampleRate, spec.maxBlock);
@@ -61,7 +62,12 @@ inline std::vector<float> renderWith(const MatchSpec& spec, const std::vector<in
   engine::Engine eng;
   eng.prepare(spec.sampleRate, spec.maxBlock, compiled.layout);
   eng.setGraph(std::move(compiled.graph));
-  return monoMix(render::renderOffline(eng, 2, spec.frames, ev));
+  return render::renderOffline(eng, 2, spec.frames, ev);
+}
+
+// As renderStereoWith, mixed to mono (empty if the patch does not compile).
+inline std::vector<float> renderWith(const MatchSpec& spec, const std::vector<int>& ids, const std::vector<float>& values) {
+  return monoMix(renderStereoWith(spec, ids, values));
 }
 
 struct MatchResult {

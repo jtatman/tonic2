@@ -10,3 +10,4 @@ build/
 *.gate.lock*
 build-win/
 build-wsl/
+__pycache__/

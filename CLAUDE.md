@@ -96,7 +96,8 @@ build/tonic2_golden --update tests/golden   # only for an intentional change to 
   patching syntax over signal nodes (`include/tonic/dsl`, `graph/signal_nodes.hpp`, M4) ->
   voices (`graph/voice_node.hpp`, `Patch::voices`, M5) ->
   mixer + FX matrix (`dsl/mixer.hpp`, `graph/mixer_nodes.hpp`, M6). Offline analysis: `include/tonic/analysis` (STFT distance, CMA-ES,
-  sound matching; CLI `tools/match.cpp` -> `tonic2_match`). Plugin formats live in the DPF adapter (`adapters/dpf`, M7;
+  sound matching, audio features; CLI `tools/match.cpp` -> `tonic2_match`); text-to-patch agent in Python
+  (`tools/patch_agent/`, Claude API, drives `tonic2_render --layout/--set/--features`). Plugin formats live in the DPF adapter (`adapters/dpf`, M7;
   build with -DTONIC2_BUILD_DPF=ON after `git submodule update --init third_party/DPF`).
 
 ## Conventions & Patterns

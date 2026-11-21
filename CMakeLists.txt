@@ -87,6 +87,12 @@ if(TONIC2_BUILD_TESTS)
   add_test(NAME match_cli COMMAND tonic2_match --demo mono --truth cutoff=3000,resonance=0.5
            --params cutoff,resonance --evals 60 --seconds 0.5 --threads 2)
 
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME patch_agent_tests COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/patch_agent/test_patch_agent.py)
+    set_tests_properties(patch_agent_tests PROPERTIES ENVIRONMENT "TONIC2_RENDER=$<TARGET_FILE:tonic2_render>")
+  endif()
+
   add_executable(tonic2_golden tools/golden.cpp)
   target_link_libraries(tonic2_golden PRIVATE tonic2)
 endif()

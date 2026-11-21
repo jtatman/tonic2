@@ -23,6 +23,7 @@ struct Demo {
   // Events for an offline render at `sampleRate`; param ids follow declaration order in build().
   std::function<std::vector<Event>(double sampleRate)> script;
   double seconds;
+  std::string description = {};  // one line for people and for the patch agent (tools/patch_agent)
 };
 
 // Mono synth: two oscillators on the played note, ladder with envelope + macro control.
@@ -179,8 +180,8 @@ inline void stereoDelay(dsl::Patch& p) {
 
 inline std::vector<Demo> all() {
   return {
-      {"stepseq", stepSeq, [](double) { return std::vector<Event>{}; }, 4.0},
-      {"stereodelay", stereoDelay, [](double) { return std::vector<Event>{}; }, 5.0},
+      {"stepseq", stepSeq, [](double) { return std::vector<Event>{}; }, 4.0, "Tonic 1 step sequencer: a saw bass line through a resonant filter, stepped by a metro"},
+      {"stereodelay", stereoDelay, [](double) { return std::vector<Event>{}; }, 5.0, "plucked tones through a ping-pong stereo delay"},
       {"mixed", mixedSong,
        [](double sr) {
          std::vector<Event> ev;
@@ -198,7 +199,7 @@ inline std::vector<Demo> all() {
          ev.push_back(Event::param(2 * bar, 0, 0.9f));
          return ev;
        },
-       5.0},
+       5.0, "small mix: poly pad and legato bass in a group, a noise hat, a delay return and a 'space' macro"},
       {"poly", polySynth,
        [](double sr) {
          std::vector<Event> ev;
@@ -212,7 +213,7 @@ inline std::vector<Demo> all() {
          for (int k = 0; k <= 12; ++k) ev.push_back(Event::param(k * bar / 3, 0, 500.f + 200.f * k));
          return ev;
        },
-       4.0},
+       4.0, "8-voice polyphonic subtractive synth (saw + triangle, 2-voice unison) with a per-voice filter envelope, a resonant low-pass and a stereo delay; plays a chord progression"},
       {"mono", monoSynth,
        [](double sr) {
          std::vector<Event> ev;
@@ -225,26 +226,26 @@ inline std::vector<Demo> all() {
          for (int k = 0; k <= 16; ++k) ev.push_back(Event::param(k * step / 2, 2, k / 16.f));  // brightness
          return ev;
        },
-       2.25},
+       2.25, "monophonic bass/lead: saw + sub square through an oversampled ladder filter with envelope; 'brightness' macro opens cutoff and resonance; plays an arpeggio"},
       {"sinesum", sineSum,
        [](double sr) {
          std::vector<Event> ev;
          for (int k = 0; k <= 20; ++k) ev.push_back(Event::param(static_cast<int>(k * sr * 0.15), 0, (k % 7) / 6.f));
          return ev;
        },
-       3.0},
+       3.0, "Tonic 1 SineSumSynth: ten sines spaced by fourths following one pitch control"},
       {"fmdrone", fmDrone,
        [](double sr) {
          return std::vector<Event>{Event::param(static_cast<int>(sr * 1.5), 2, 0.8f),
                                    Event::param(static_cast<int>(sr * 3.0), 1, 24.f)};
        },
-       4.0},
+       4.0, "FM drone with slowly moving modulation index"},
       {"filterednoise", filteredNoise,
        [](double sr) {
          return std::vector<Event>{Event::param(static_cast<int>(sr * 1.0), 0, 0.62f),
                                    Event::param(static_cast<int>(sr * 2.0), 1, 12.f)};
        },
-       3.0},
+       3.0, "noise through swept band-pass filters"},
   };
 }
 

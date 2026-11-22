@@ -4,12 +4,17 @@ Set TONIC2_RENDER to a tonic2_render binary to also run the loop against real re
 """
 from __future__ import annotations
 
+import base64
 import http.server
+import io
 import json
+import math
 import os
+import struct
 import subprocess
 import threading
 import sys
+import wave
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +22,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import backends as bk  # noqa: E402
+import critic as cr  # noqa: E402
 import patch_agent as pa  # noqa: E402
 
 LAYOUT = {
@@ -255,6 +261,200 @@ class OpenAICompatBackendTests(unittest.TestCase):
         backend.start("s", {})
         with self.assertRaisesRegex(bk.AgentError, "could not reach"):
             backend.ask("hi")
+
+
+class ScriptedBackend:
+    """Backend that returns scripted replies and records the user turns it received."""
+
+    name = "scripted"
+
+    def __init__(self, replies):
+        self.replies, self.turns = list(replies), []
+
+    def start(self, system, schema):
+        self.system = system
+
+    def ask(self, text):
+        self.turns.append(text)
+        return self.replies.pop(0)
+
+
+class ScriptedCritic:
+    name = "scripted-critic"
+
+    def __init__(self, matches):
+        self.matches, self.heard = list(matches), []
+
+    def judge(self, description, wav):
+        self.heard.append(Path(wav).name)
+        return {"brightness": "dark", "character": "soft", "envelope": "sustained", "notes": "dull", "match": self.matches.pop(0)}
+
+
+def answer(cutoff, done=True):
+    return {"params": {"cutoff": cutoff, "level": -6}, "rationale": "r", "done": done}
+
+
+class MinRoundsAndCriticTests(unittest.TestCase):
+    def test_done_is_ignored_until_min_rounds(self):
+        backend = ScriptedBackend([answer(1000), answer(2000), answer(3000), answer(4000)])
+        with tempfile.TemporaryDirectory() as d:
+            result = pa.run_agent("bright", "fake", FakeRenderer(), backend, Path(d), rounds=4, min_rounds=3, log=quiet)
+        self.assertEqual(len(result.rounds), 3)  # done on every reply, but three rounds are required
+        self.assertIn("at least 3 will run", backend.turns[0])
+        self.assertIn("at least 3 rounds are required", backend.turns[1])
+        self.assertIn("This is round 2; at least 3 rounds are required", backend.turns[2])
+        self.assertEqual(len(backend.turns), 3)  # round 3's done flag is accepted
+
+    def test_after_min_rounds_model_may_stop(self):
+        backend = ScriptedBackend([answer(1000, done=False), answer(2000, done=False), answer(3000)])
+        with tempfile.TemporaryDirectory() as d:
+            result = pa.run_agent("bright", "fake", FakeRenderer(), backend, Path(d), rounds=4, min_rounds=1, log=quiet)
+        self.assertEqual(len(result.rounds), 3)
+        self.assertIn("set done=true", backend.turns[1])
+
+    def test_min_rounds_capped_by_rounds(self):
+        backend = ScriptedBackend([answer(1000, done=False), answer(2000, done=False)])
+        with tempfile.TemporaryDirectory() as d:
+            result = pa.run_agent("bright", "fake", FakeRenderer(), backend, Path(d), rounds=2, min_rounds=5, log=quiet)
+        self.assertEqual(len(result.rounds), 2)
+
+    def test_critic_feedback_and_best_round(self):
+        backend = ScriptedBackend([answer(1000, done=False), answer(2000, done=False), answer(3000, done=True)])
+        critic = ScriptedCritic([1, 4, 2, 4])  # defaults, then rounds 1-3
+        with tempfile.TemporaryDirectory() as d:
+            result = pa.run_agent("bright", "fake", FakeRenderer(), backend, Path(d), rounds=3, min_rounds=1, critic=critic, log=quiet)
+            self.assertTrue(Path(result.best.wav).is_file())
+        self.assertEqual(critic.heard, ["baseline.wav", "round1.wav", "round2.wav", "round3.wav"])
+        self.assertIn('A listener heard the defaults: sounds dark, soft, sustained ("dull"); rated 1/5', backend.turns[0])
+        self.assertIn("A listener heard this render: sounds dark, soft, sustained", backend.turns[1])
+        self.assertIn("rated 4/5", backend.turns[1])
+        self.assertEqual(result.best_index, 2)  # rounds 1 and 3 both score 4: the later one wins
+        preset = result.preset()
+        self.assertEqual(preset["chosen_round"], 3)
+        self.assertEqual(preset["params"]["cutoff"], 3000.0)
+        self.assertEqual([h["verdict"]["match"] for h in preset["history"]], [4, 2, 4])
+
+    def test_without_critic_last_round_is_kept(self):
+        backend = ScriptedBackend([answer(1000, done=False), answer(2000)])
+        with tempfile.TemporaryDirectory() as d:
+            result = pa.run_agent("bright", "fake", FakeRenderer(), backend, Path(d), rounds=2, log=quiet)
+        self.assertEqual(result.best_index, 1)
+        self.assertIsNone(result.preset()["verdict"])
+
+
+class FakeJsonServer:
+    """Local HTTP server: each POST is recorded and answered with the next scripted JSON body."""
+
+    def __init__(self, bodies):
+        self.bodies, self.requests = list(bodies), []
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                outer.requests.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+                body = json.dumps(outer.bodies.pop(0)).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def ollama_reply(content, done_reason="stop"):
+    return {"message": {"role": "assistant", "content": content}, "done": True, "done_reason": done_reason}
+
+
+class OllamaBackendTests(unittest.TestCase):
+    def test_native_request_and_history(self):
+        server = FakeJsonServer([ollama_reply(json.dumps(answer(800, done=False))), ollama_reply(json.dumps(answer(900)))])
+        try:
+            backend = bk.OllamaBackend(base_url=server.url, model="lfm3", think=False, num_ctx=12288)
+            with tempfile.TemporaryDirectory() as d:
+                result = pa.run_agent("dark", "fake", FakeRenderer(), backend, Path(d), rounds=2, log=quiet)
+        finally:
+            server.close()
+        self.assertEqual([r.values["cutoff"] for r in result.rounds], [800.0, 900.0])
+        path, req = server.requests[1]
+        self.assertEqual(path, "/api/chat")
+        self.assertIs(req["think"], False)
+        self.assertIs(req["stream"], False)
+        self.assertEqual(req["options"]["num_ctx"], 12288)
+        self.assertEqual(req["format"]["required"], ["params", "rationale", "done"])
+        self.assertEqual([m["role"] for m in req["messages"]], ["system", "user", "assistant", "user"])
+
+    def test_length_cutoff_and_server_error(self):
+        for body, pattern in ((ollama_reply('{"params": {', done_reason="length"), "tokens"), ({"error": "model not found"}, "model not found")):
+            server = FakeJsonServer([body])
+            try:
+                backend = bk.OllamaBackend(base_url=server.url)
+                backend.start("s", {})
+                with self.assertRaisesRegex(bk.AgentError, pattern):
+                    backend.ask("hi")
+            finally:
+                server.close()
+
+
+def write_float_wav(path, samples, rate=48000, channels=2):
+    data = b"".join(struct.pack("<f", s) for s in samples)
+    fmt = struct.pack("<HHIIHH", 3, channels, rate, rate * channels * 4, channels * 4, 32)
+    Path(path).write_bytes(b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data)) + b"WAVE"
+                           + b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(data)) + data)
+
+
+class CriticTests(unittest.TestCase):
+    def test_clip_is_short_mono_16k_and_normalised(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "x.wav"
+            frames = 48000 * 5  # 5 s stereo at 48 kHz, quiet 440 Hz
+            write_float_wav(p, [0.05 * math.sin(2 * math.pi * 440 * (i // 2) / 48000) for i in range(frames * 2)])
+            clip = cr.clip_for_listening(p, seconds=3.0)
+        with wave.open(io.BytesIO(clip)) as w:
+            self.assertEqual((w.getnchannels(), w.getsampwidth(), w.getframerate()), (1, 2, 16000))
+            self.assertEqual(w.getnframes(), 48000)
+            pcm = struct.unpack(f"<{w.getnframes()}h", w.readframes(w.getnframes()))
+        self.assertAlmostEqual(max(abs(s) for s in pcm) / 32767, 0.8, delta=0.02)
+
+    def test_rejects_non_float_wav(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "pcm.wav"
+            with wave.open(str(p), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(16000)
+                w.writeframes(b"\x00\x00" * 100)
+            with self.assertRaisesRegex(bk.AgentError, "float"):
+                cr.read_float_wav(p)
+
+    def test_ollama_critic_request_and_verdict(self):
+        server = FakeJsonServer([ollama_reply('{"brightness": "very bright", "character": "harsh", "envelope": "plucked", "notes": "buzzy", "match": 9}')])
+        try:
+            critic = cr.OllamaAudioCritic(model="lfm3-omni", base_url=server.url, num_ctx=4096)
+            with tempfile.TemporaryDirectory() as d:
+                p = Path(d) / "r.wav"
+                write_float_wav(p, [0.3] * 9600)
+                verdict = critic.judge("dark pad", p)
+        finally:
+            server.close()
+        self.assertEqual(verdict, {"brightness": "medium", "character": "harsh", "envelope": "plucked", "notes": "buzzy", "match": 5})
+        path, req = server.requests[0]
+        self.assertEqual(path, "/api/chat")
+        msg = req["messages"][0]
+        self.assertIn("dark pad", msg["content"])
+        self.assertEqual(base64.b64decode(msg["images"][0])[:4], b"RIFF")  # audio travels in `images`
+        self.assertIs(req["think"], False)
+        self.assertEqual(req["options"]["num_ctx"], 4096)
+        self.assertEqual(req["format"]["properties"]["match"]["enum"], [1, 2, 3, 4, 5])
 
 
 @unittest.skipUnless(os.environ.get("TONIC2_RENDER"), "TONIC2_RENDER not set")

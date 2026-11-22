@@ -3,8 +3,10 @@
   anthropic    Claude through the Anthropic API (API credits; ANTHROPIC_API_KEY or `ant auth login`)
   claude-code  Claude through the Claude Code CLI in headless mode (`claude -p`), billed to the
                subscription the CLI is logged in with
-  openai       any server with an OpenAI-style /chat/completions endpoint: Ollama, llama.cpp
-               (llama-server), LM Studio, vLLM. Local and free.
+  ollama       Ollama's native /api/chat: JSON-schema `format`, `think` on/off and `num_ctx` per request.
+               The best choice for local models served by Ollama.
+  openai       any server with an OpenAI-style /chat/completions endpoint: llama.cpp (llama-server),
+               LM Studio, vLLM, or Ollama's compatibility layer. Local and free.
 
 All three ask for output that matches a JSON schema; the agent still validates and clamps the result,
 because a small local model or a prompt-only fallback can return something else.
@@ -228,6 +230,62 @@ class OpenAICompatBackend:
             raise AgentError(f"unexpected reply from {self.base_url}: {str(reply)[:300]}") from e
         if choice.get("finish_reason") == "length":
             raise AgentError("the model ran out of tokens before the JSON was complete")
+        data = parse_json_text(text)
+        self.messages.append({"role": "assistant", "content": text})
+        return data
+
+
+def post_json(url: str, body: dict[str, Any], timeout: float, opener: Opener | None = None) -> dict[str, Any]:
+    """POST a JSON body and return the JSON reply, mapping transport failures to AgentError."""
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+    open_ = opener or (lambda r, t: urllib.request.urlopen(r, timeout=t))
+    try:
+        with open_(req, timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise AgentError(f"{url} returned {e.code}: {e.read().decode('utf-8', 'replace')[:300]}") from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise AgentError(f"could not reach {url}: {e}") from e
+    except json.JSONDecodeError as e:
+        raise AgentError(f"{url} did not return JSON: {e}") from e
+
+
+class OllamaBackend:
+    """Ollama's native chat API with structured outputs.
+
+    think=False turns reasoning off on thinking models (much faster and stays inside num_predict);
+    num_ctx sets the context window for this request, so long layouts and multi-round histories fit.
+    """
+
+    name = "ollama"
+
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "lfm3", think: bool = False,
+                 num_ctx: int = 8192, num_predict: int = 4096, temperature: float = 0.4, timeout: float = 600.0,
+                 opener: Opener | None = None):
+        self.base_url, self.model, self.think = base_url.rstrip("/"), model, think
+        self.num_ctx, self.num_predict, self.temperature, self.timeout, self.opener = num_ctx, num_predict, temperature, timeout, opener
+        self.messages: list[dict[str, str]] = []
+        self.schema: dict[str, Any] = {}
+
+    def start(self, system: str, schema: dict[str, Any]) -> None:
+        self.schema = schema
+        self.messages = [{"role": "system", "content": f"{system}\n\nReply with one JSON object matching this schema:\n{json.dumps(schema)}"}]
+
+    def ask(self, user_text: str) -> dict[str, Any]:
+        self.messages.append({"role": "user", "content": user_text})
+        reply = post_json(f"{self.base_url}/api/chat", {
+            "model": self.model,
+            "messages": self.messages,
+            "format": self.schema,
+            "think": self.think,
+            "stream": False,
+            "options": {"num_ctx": self.num_ctx, "num_predict": self.num_predict, "temperature": self.temperature},
+        }, self.timeout, self.opener)
+        if "error" in reply:
+            raise AgentError(f"ollama: {reply['error']}")
+        if reply.get("done_reason") == "length":
+            raise AgentError(f"the model used all {self.num_predict} tokens before the JSON was complete")
+        text = (reply.get("message") or {}).get("content") or ""
         data = parse_json_text(text)
         self.messages.append({"role": "assistant", "content": text})
         return data

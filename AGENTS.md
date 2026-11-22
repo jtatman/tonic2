@@ -164,7 +164,7 @@ build/tonic2_golden --update tests/golden   # only for an intentional change to 
   voices (`graph/voice_node.hpp`, `Patch::voices`, M5) ->
   mixer + FX matrix (`dsl/mixer.hpp`, `graph/mixer_nodes.hpp`, M6). Offline analysis: `include/tonic/analysis` (STFT distance, CMA-ES,
   sound matching, audio features; CLI `tools/match.cpp` -> `tonic2_match`); text-to-patch agent in Python
-  (`tools/patch_agent/`, pluggable LLM backends: Anthropic API, Claude Code CLI, local OpenAI-style server; drives `tonic2_render --layout/--set/--features`). Plugin formats live in the DPF adapter (`adapters/dpf`, M7;
+  (`tools/patch_agent/`, pluggable LLM backends: Anthropic API, Claude Code CLI, native Ollama, OpenAI-style server; optional audio listening critic `critic.py`; drives `tonic2_render --layout/--set/--features`). Plugin formats live in the DPF adapter (`adapters/dpf`, M7;
   build with -DTONIC2_BUILD_DPF=ON after `git submodule update --init third_party/DPF`).
 
 ## Conventions & Patterns

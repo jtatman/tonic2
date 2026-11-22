@@ -276,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--think", action="store_true", help="ollama backend: let thinking models reason (slow; off by default)")
     ap.add_argument("--num-ctx", type=int, default=8192, help="ollama: context window per request (default: 8192)")
     ap.add_argument("--critic", metavar="MODEL", help="audio-capable Ollama model that listens to each render (e.g. lfm3-omni)")
+    ap.add_argument("--critic-url", help="Ollama server for the critic (default: --ollama-url), e.g. a local GPU "
+                                         "while the proposer runs on a remote one")
     ap.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"],
                     help="reasoning effort for the Claude backends (default: medium)")
     ap.add_argument("--base-url", default="http://127.0.0.1:11434/v1", help="openai backend endpoint (default: local Ollama)")
@@ -291,7 +293,8 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out)
     workdir = out.parent / (out.name + "_rounds")
     backend = make_backend(args)
-    critic = OllamaAudioCritic(model=args.critic, base_url=args.ollama_url, num_ctx=args.num_ctx) if args.critic else None
+    critic = (OllamaAudioCritic(model=args.critic, base_url=args.critic_url or args.ollama_url, num_ctx=args.num_ctx)
+              if args.critic else None)
     print(f"backend {backend.name}, demo {args.demo}, {args.min_rounds}-{args.rounds} round(s)"
           + (f", critic {critic.name}" if critic else ""))
     try:

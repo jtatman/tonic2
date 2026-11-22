@@ -1,0 +1,29 @@
+[
+  {
+    "demo": "poly",
+    "prompt": "bright, aggressive resonant pluck, loud",
+    "checks": [
+      {"label": "brighter", "feature": "centroid_hz", "op": "ratio_gt", "value": 1.3},
+      {"label": "louder", "feature": "rms_db", "op": "delta_gt", "value": 3},
+      {"label": "more resonant", "any": [{"param": "resonance", "op": "gt", "value": 1.2}, {"param": "bite", "op": "gt", "value": 0.3}]}
+    ]
+  },
+  {
+    "demo": "poly",
+    "prompt": "dark, soft, mellow pad",
+    "checks": [
+      {"label": "darker", "feature": "centroid_hz", "op": "ratio_lt", "value": 0.85},
+      {"label": "quieter", "feature": "rms_db", "op": "delta_lt", "value": -2},
+      {"label": "not resonant", "all": [{"param": "resonance", "op": "le", "value": 1.2}, {"param": "bite", "op": "le", "value": 0.2}]}
+    ]
+  },
+  {
+    "demo": "mono",
+    "prompt": "squelchy acid bass with high resonance",
+    "checks": [
+      {"label": "resonance high", "any": [{"param": "resonance", "op": "ge", "value": 0.6}, {"param": "brightness", "op": "ge", "value": 0.6}]},
+      {"label": "bass weight kept", "feature": "band_low+band_low_mid", "op": "gt", "value": 0.6},
+      {"label": "level sane", "all": [{"feature": "rms_db", "op": "gt", "value": -30}, {"feature": "peak_db", "op": "lt", "value": -0.5}]}
+    ]
+  }
+]

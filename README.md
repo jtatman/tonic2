@@ -314,6 +314,20 @@ python tools/patch_agent/patch_agent.py "squelchy acid bass" --demo mono --backe
 # -> PREFIX.json (chosen round's {"params": {...}}, its verdict and the round history), PREFIX.wav, PREFIX_rounds/
 ```
 
+**Benchmarking** (`tools/patch_agent/bench.py`): `agent` runs every proposer × critic combination over
+a prompt set and scores the kept render with direction checks against the defaults; `listen` gives
+an audio model blind A/B questions to show whether it really hears clips. Prompts and checks are data
+in `bench_prompts.json` (features or parameters compared absolutely, as a ratio or as a difference to
+the defaults, combined with `any`/`all`), so new prompts need no code.
+
+```bash
+python tools/patch_agent/bench.py agent --proposer ollama:ornith:9b@http://10.209.1.214:11434 --proposer claude-code:opus \
+       --critic none --critic lfm3-omni --repeats 2 --out results.json
+python tools/patch_agent/bench.py listen lfm3-omni          # 7/8 right; a model that cannot hear scores about 4
+python tools/patch_agent/patch_agent.py "warm pad" --backend ollama --ollama-url http://10.209.1.214:11434 \
+       --model ornith:9b --critic lfm3-omni --critic-url http://localhost:11434 --min-rounds 3
+```
+
 Results so far (3 prompts × 2 runs, 3 direction checks each, `--min-rounds 3`, scored on the kept
 render; small samples, so treat differences of 1-2 as noise):
 

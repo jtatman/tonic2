@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import backends as bk  # noqa: E402
+import bench  # noqa: E402
 import critic as cr  # noqa: E402
 import patch_agent as pa  # noqa: E402
 
@@ -457,6 +458,59 @@ class CriticTests(unittest.TestCase):
         self.assertEqual(req["format"]["properties"]["match"]["enum"], [1, 2, 3, 4, 5])
 
 
+class BenchTests(unittest.TestCase):
+    def test_proposer_and_critic_specs(self):
+        p = bench.parse_proposer("ollama:ornith:9b@http://10.209.1.214:11434")
+        self.assertEqual((p["backend"], p["model"], p["url"]), ("ollama", "ornith:9b", "http://10.209.1.214:11434"))
+        self.assertEqual(bench.parse_proposer("claude-code:opus")["url"], None)
+        self.assertEqual(bench.parse_proposer("openai:qwen3:4b@http://h:8080/v1")["model"], "qwen3:4b")
+        for bad in ("ollama", "nope:model", "ollama:"):
+            with self.assertRaises(ValueError):
+                bench.parse_proposer(bad)
+        self.assertIsNone(bench.parse_critic("none"))
+        self.assertEqual(bench.parse_critic("lfm3-omni")["url"], "http://localhost:11434")
+        self.assertEqual(bench.parse_critic("lfm3-omni@http://box:11434")["url"], "http://box:11434")
+
+    def test_check_language(self):
+        base = {"centroid_hz": 500.0, "rms_db": -30.0, "band_low": 0.3, "band_low_mid": 0.4}
+        kept = {"centroid_hz": 800.0, "rms_db": -25.0, "band_low": 0.2, "band_low_mid": 0.3}
+        values, defaults = {"resonance": 3.0, "bite": 0.0}, {"resonance": 1.2, "bite": 0.0}
+        ok = lambda spec: bench.check_value(spec, kept, base, values, defaults)  # noqa: E731
+        self.assertTrue(ok({"feature": "centroid_hz", "op": "ratio_gt", "value": 1.5}))
+        self.assertFalse(ok({"feature": "centroid_hz", "op": "ratio_gt", "value": 1.7}))
+        self.assertTrue(ok({"feature": "rms_db", "op": "delta_gt", "value": 4}))
+        self.assertTrue(ok({"feature": "band_low+band_low_mid", "op": "lt", "value": 0.6}))
+        self.assertTrue(ok({"param": "resonance", "op": "ratio_gt", "value": 2}))
+        self.assertTrue(ok({"any": [{"param": "bite", "op": "gt", "value": 0.5}, {"param": "resonance", "op": "ge", "value": 3}]}))
+        self.assertFalse(ok({"all": [{"param": "bite", "op": "gt", "value": 0.5}, {"param": "resonance", "op": "ge", "value": 3}]}))
+        with self.assertRaises(KeyError):
+            ok({"param": "cutoff", "op": "gt", "value": 1})
+
+    def test_bundled_prompts_are_well_formed(self):
+        prompts = json.loads((Path(bench.__file__).parent / "bench_prompts.json").read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(prompts), 3)
+
+        def walk(spec):
+            if "any" in spec or "all" in spec:
+                for s in spec.get("any", spec.get("all")):
+                    yield from walk(s)
+            else:
+                self.assertIn(spec["op"], bench.OPS)
+                self.assertTrue(("feature" in spec) != ("param" in spec))
+                yield spec
+        for p in prompts:
+            self.assertTrue(p["checks"] and all("label" in c for c in p["checks"]))
+            for c in p["checks"]:
+                list(walk(c))
+
+    def test_summary_table(self):
+        recs = [{"proposer": "ollama:x", "critic": "none", "prompt": "a", "ok": True, "checks": {"c1": True, "c2": False},
+                 "revised": True, "seconds": 10.0},
+                {"proposer": "ollama:x", "critic": "none", "prompt": "a", "ok": False, "error": "boom", "seconds": 30.0}]
+        table = bench.summarise(recs, {"a": 2})
+        self.assertEqual(table[2], "| ollama:x | none | 1/2 | 1/4 | 1/1 | 20 |")
+
+
 @unittest.skipUnless(os.environ.get("TONIC2_RENDER"), "TONIC2_RENDER not set")
 class RealRendererTests(unittest.TestCase):
     def test_loop_with_real_renders(self):
@@ -474,6 +528,21 @@ class RealRendererTests(unittest.TestCase):
             result = pa.run_agent("bright pluck", "poly", renderer, pa.AnthropicBackend(client=client), Path(d), log=quiet)
             self.assertTrue((Path(d) / "round2.wav").is_file())
         self.assertGreater(result.rounds[1].features["centroid_hz"], 1.5 * result.rounds[0].features["centroid_hz"])
+
+    def test_bundled_prompt_params_exist_in_their_demos(self):
+        renderer = pa.BinaryRenderer(os.environ["TONIC2_RENDER"])
+        prompts = json.loads((Path(bench.__file__).parent / "bench_prompts.json").read_text(encoding="utf-8"))
+        for p in prompts:
+            names = {q["name"] for q in renderer.layout(p["demo"])["params"]}
+
+            def params(spec):
+                for s in spec.get("any", spec.get("all", [])):
+                    yield from params(s)
+                if "param" in spec:
+                    yield spec["param"]
+            for c in p["checks"]:
+                for name in params(c):
+                    self.assertIn(name, names, f"{p['prompt']!r}: demo {p['demo']} has no parameter {name!r}")
 
 
 if __name__ == "__main__":

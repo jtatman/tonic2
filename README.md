@@ -314,6 +314,20 @@ python tools/patch_agent/patch_agent.py "squelchy acid bass" --demo mono --backe
 # -> PREFIX.json (chosen round's {"params": {...}}, its verdict and the round history), PREFIX.wav, PREFIX_rounds/
 ```
 
+Results so far (3 prompts × 2 runs, 3 direction checks each, `--min-rounds 3`, scored on the kept
+render; small samples, so treat differences of 1-2 as noise):
+
+| Proposer | Without critic | With `--critic lfm3-omni` | Time per run |
+|-|-|-|-|
+| Claude via `claude-code` (CLI 2.1.110, `opus` = claude-opus-4-6) | 12/18 | **16/18** | 60 / 78 s |
+| `ornith:9b` on a remote Ollama | 12/18 | **15/18** | 36 / 61 s |
+| `qwythos-9b`, `amr-reasoning` (9B) | 10/18, 9/18 | not run | ~45 s |
+| `lfm3` (1.7B, local) | 9/18 | 11/18 | 84 / 148 s (model swaps on a 4 GB GPU) |
+
+With a capable proposer the critic helps consistently, mostly by stopping overshoot (acid basses stayed
+bass-heavy instead of jumping to a 6 kHz centroid). The critic itself is coarse: its descriptions
+barely change between rounds and its 1-5 rating is nearly constant, so round selection rarely matters yet.
+
 Thinking models: thinking is off by default on both local backends (`think: false` natively,
 `reasoning_effort: "none"` on the OpenAI-style one). With it on, `qwen3:4b` took over 10 minutes per
 reply, and `lfm3` overran a 4,096-token reply on every try. Small (1.7-4B) models follow the schema

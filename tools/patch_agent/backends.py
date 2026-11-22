@@ -136,6 +136,8 @@ class ClaudeCodeBackend:
                  runner: Runner = subprocess.run, timeout: float = 600.0):
         self.binary, self.model, self.effort, self.runner, self.timeout = binary, model, effort, runner, timeout
         self.system, self.schema, self.session = "", {}, None
+        self.models_used: set[str] = set()  # from the CLI's modelUsage: which model actually answered
+        self.cost_usd = 0.0                 # the CLI's own cost estimate (on a subscription, usage rather than a bill)
         self._cwd = tempfile.mkdtemp(prefix="tonic2_agent_")
 
     def start(self, system: str, schema: dict[str, Any]) -> None:
@@ -169,6 +171,8 @@ class ClaudeCodeBackend:
                 msg += " (run `claude` in a terminal and log in again)"
             raise AgentError(f"Claude Code CLI: {msg}")
         self.session = out.get("session_id") or self.session
+        self.models_used.update((out.get("modelUsage") or {}).keys())
+        self.cost_usd += float(out.get("total_cost_usd") or 0.0)
         structured = out.get("structured_output")
         if isinstance(structured, dict):
             return structured

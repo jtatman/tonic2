@@ -3,19 +3,24 @@
 
 Loop (step 2 of docs/ai-synthesis-survey.md):
   1. `tonic2_render --layout <demo>` gives the patch's parameters (names, ranges, units, macros).
-  2. Claude proposes values as JSON, constrained by a JSON schema (structured outputs).
+  2. An LLM proposes values as JSON, constrained by a JSON schema built from the layout.
   3. `tonic2_render <demo> out.wav --set ... --features` renders them and measures the result
      (level, brightness, noisiness, band balance, attack, sustain, tail).
-  4. The measurements go back to Claude, which revises or says it is done.
+  4. The measurements go back to the model, which revises or says it is done.
+
+Backends (--backend, see backends.py): anthropic (API credits), claude-code (the `claude` CLI and its
+subscription), openai (any local OpenAI-style server: Ollama, llama.cpp, LM Studio).
 
 The model cannot hear the audio; the measurements are its ears. Output: a preset JSON with the same
 {"params": {...}} shape tonic2_match writes, plus a WAV of the final render.
 
 Usage:
   python patch_agent.py "warm evolving pad with a slow attack" --demo poly --out pad
-  python patch_agent.py "squelchy acid bass" --demo mono --rounds 5 --effort high
+  python patch_agent.py "squelchy acid bass" --demo mono --backend claude-code --effort high
+  python patch_agent.py "glassy bell" --backend openai --model qwen3:4b   # local Ollama
 
-Credentials: the Anthropic SDK reads ANTHROPIC_API_KEY (or an `ant auth login` profile).
+Credentials: anthropic reads ANTHROPIC_API_KEY or an `ant auth login` profile; claude-code uses the
+CLI's own login; openai sends OPENAI_API_KEY as a bearer token if set (local servers ignore it).
 """
 from __future__ import annotations
 
@@ -28,6 +33,9 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from backends import AgentError, AnthropicBackend, Backend, ClaudeCodeBackend, OpenAICompatBackend  # noqa: E402
 
 MODEL = "claude-opus-5-5"
 
@@ -50,10 +58,6 @@ parameters they drive, so account for both. Stay inside each range.
 
 Each turn, return every parameter value, a short rationale tied to the measurements, and done=true
 once further changes would not bring the sound closer to the description."""
-
-
-class AgentError(RuntimeError):
-    pass
 
 
 class Renderer(Protocol):
@@ -162,55 +166,26 @@ class AgentResult:
         }
 
 
-def ask_claude(client: Any, messages: list[dict[str, Any]], schema: dict[str, Any], effort: str, model: str) -> tuple[Any, dict[str, Any]]:
-    """One structured-output request. Returns (response content to append, parsed JSON)."""
-    response = client.beta.messages.create(
-        model=model,
-        max_tokens=16000,
-        system=SYSTEM_PROMPT,
-        messages=messages,
-        output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
-        # A policy decline re-runs the request on a fallback model inside the same call.
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-    )
-    if response.stop_reason == "refusal":
-        details = getattr(response, "stop_details", None)
-        raise AgentError(f"request declined: {getattr(details, 'explanation', None) or 'no explanation'}")
-    if response.stop_reason == "max_tokens":
-        raise AgentError("response hit max_tokens before the JSON was complete")
-    text = next((b.text for b in response.content if b.type == "text"), None)
-    if text is None:
-        raise AgentError(f"no text block in response (stop_reason {response.stop_reason})")
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise AgentError(f"response was not valid JSON: {e}") from e
-    if not isinstance(data, dict) or not isinstance(data.get("params"), dict):
-        raise AgentError("response JSON has no params object")
-    return response.content, data
-
-
-def run_agent(prompt: str, demo: str, renderer: Renderer, client: Any, workdir: Path, rounds: int = 4,
-              effort: str = "medium", model: str = MODEL, log=print) -> AgentResult:
+def run_agent(prompt: str, demo: str, renderer: Renderer, backend: Backend, workdir: Path, rounds: int = 4,
+              log=print) -> AgentResult:
     layout = renderer.layout(demo)
     schema = response_schema(layout)
+    backend.start(SYSTEM_PROMPT, schema)
     defaults = clamp_values(layout, {})
     workdir.mkdir(parents=True, exist_ok=True)
     baseline = renderer.render(demo, defaults, workdir / "baseline.wav")
     result = AgentResult(demo=demo, prompt=prompt, baseline=baseline)
 
-    messages: list[dict[str, Any]] = [{
-        "role": "user",
-        "content": (
-            f"Sound to make: {prompt}\n\n"
-            f"Patch layout:\n{json.dumps(layout, indent=2)}\n\n"
-            f"Measurements of the patch at its defaults:\n{json.dumps(baseline)}\n\n"
-            "Propose values for every parameter."
-        ),
-    }]
+    message = (
+        f"Sound to make: {prompt}\n\n"
+        f"Patch layout:\n{json.dumps(layout, indent=2)}\n\n"
+        f"Measurements of the patch at its defaults:\n{json.dumps(baseline)}\n\n"
+        "Propose values for every parameter."
+    )
     for i in range(1, rounds + 1):
-        content, data = ask_claude(client, messages, schema, effort, model)
+        data = backend.ask(message)
+        if not isinstance(data.get("params"), dict):
+            raise AgentError("reply JSON has no params object")
         values = clamp_values(layout, data["params"])
         features = renderer.render(demo, values, workdir / f"round{i}.wav")
         rnd = Round(values=values, features=features, rationale=str(data.get("rationale", "")), done=bool(data.get("done", False)))
@@ -221,17 +196,23 @@ def run_agent(prompt: str, demo: str, renderer: Renderer, client: Any, workdir: 
             f"attack {features.get('attack_ms', 0):.0f} ms, sustain {features.get('sustain_ratio', 0):.2f}")
         if rnd.done:
             break
-        messages.append({"role": "assistant", "content": content})  # unchanged, thinking blocks included
         clamped = [n for n in values if n in data["params"] and data["params"][n] != values[n]]
         note = f" These values were outside their ranges and were clamped: {', '.join(clamped)}." if clamped else ""
-        messages.append({
-            "role": "user",
-            "content": (
-                f"Measurements of your values:\n{json.dumps(features)}\n{note}\n"
-                "Compare them with the description and refine, or set done=true if it is as close as it will get."
-            ),
-        })
+        message = (
+            f"Measurements of your values:\n{json.dumps(features)}\n{note}\n"
+            "Compare them with the description and refine, or set done=true if it is as close as it will get."
+        )
     return result
+
+
+def make_backend(args: argparse.Namespace) -> Backend:
+    if args.backend == "anthropic":
+        return AnthropicBackend(model=args.model or MODEL, effort=args.effort)
+    if args.backend == "claude-code":
+        return ClaudeCodeBackend(binary=args.claude_bin, model=args.model or "opus", effort=args.effort)
+    reasoning = None if args.local_reasoning == "omit" else args.local_reasoning
+    return OpenAICompatBackend(base_url=args.base_url, model=args.model or "qwen3:4b", api_key=os.environ.get("OPENAI_API_KEY"),
+                               reasoning=reasoning)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -239,43 +220,36 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("prompt", help="description of the sound")
     ap.add_argument("--demo", default="poly", help="demo patch to program (default: poly)")
     ap.add_argument("--rounds", type=int, default=4, help="maximum render-and-revise rounds (default: 4)")
-    ap.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
-    ap.add_argument("--model", default=MODEL)
+    ap.add_argument("--backend", default="anthropic", choices=["anthropic", "claude-code", "openai"],
+                    help="anthropic: API credits; claude-code: the `claude` CLI and its subscription; "
+                         "openai: a local OpenAI-style server such as Ollama (default: anthropic)")
+    ap.add_argument("--model", help=f"model name (defaults: anthropic {MODEL}, claude-code opus, openai qwen3:4b)")
+    ap.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"],
+                    help="reasoning effort for the Claude backends (default: medium)")
+    ap.add_argument("--base-url", default="http://127.0.0.1:11434/v1", help="openai backend endpoint (default: local Ollama)")
+    ap.add_argument("--local-reasoning", default="none", choices=["none", "low", "medium", "high", "omit"],
+                    help="openai backend: reasoning_effort to request; 'none' disables thinking (fast), "
+                         "'omit' leaves the field out for servers that reject it (default: none)")
+    ap.add_argument("--claude-bin", default="claude", help="Claude Code CLI executable (default: claude)")
     ap.add_argument("--out", default="patch", help="output prefix: writes PREFIX.json and PREFIX.wav")
     ap.add_argument("--render", help="path to tonic2_render (default: search build dirs, TONIC2_RENDER, PATH)")
     args = ap.parse_args(argv)
 
-    import anthropic  # imported here so the module and its tests work without the SDK installed
-
     renderer = BinaryRenderer(find_render_binary(args.render))
     out = Path(args.out)
     workdir = out.parent / (out.name + "_rounds")
+    backend = make_backend(args)
+    print(f"backend {backend.name}, demo {args.demo}, up to {args.rounds} round(s)")
     try:
-        result = run_agent(args.prompt, args.demo, renderer, anthropic.Anthropic(), workdir, args.rounds, args.effort, args.model)
+        result = run_agent(args.prompt, args.demo, renderer, backend, workdir, args.rounds)
     except AgentError as e:
         print(f"error: {e}", file=sys.stderr)
-        return 1
-    except TypeError as e:  # the SDK raises this at request time when it finds no credentials at all
-        if "authentication" not in str(e):
-            raise
-        print("error: no Anthropic credentials found (set ANTHROPIC_API_KEY or run `ant auth login`)", file=sys.stderr)
-        return 1
-    except anthropic.AuthenticationError:
-        print("error: no valid Anthropic credentials (set ANTHROPIC_API_KEY or run `ant auth login`)", file=sys.stderr)
-        return 1
-    except anthropic.RateLimitError:
-        print("error: rate limited by the API; try again shortly", file=sys.stderr)
-        return 1
-    except anthropic.APIStatusError as e:
-        print(f"error: API returned {e.status_code}: {e.message}", file=sys.stderr)
-        return 1
-    except anthropic.APIConnectionError:
-        print("error: could not reach the Anthropic API", file=sys.stderr)
         return 1
 
     final_wav = out.with_suffix(".wav")
     shutil.copyfile(workdir / f"round{len(result.rounds)}.wav", final_wav)
-    out.with_suffix(".json").write_text(json.dumps(result.preset(), indent=2) + "\n", encoding="utf-8")
+    preset = result.preset() | {"backend": backend.name}
+    out.with_suffix(".json").write_text(json.dumps(preset, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {out.with_suffix('.json')} and {final_wav} after {len(result.rounds)} round(s)")
     return 0
 

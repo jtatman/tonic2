@@ -278,25 +278,35 @@ Rosenbrock problems, determinism, and recovery of the mono demo's cutoff and res
 
 ## Text-to-patch agent (`tools/patch_agent/`)
 
-Describe a sound in words and Claude programs a demo patch to match (step 2 of the
+Describe a sound in words and an LLM programs a demo patch to match (step 2 of the
 [AI synthesis survey](docs/ai-synthesis-survey.md)). It runs as a loop:
 
 1. `tonic2_render --layout <demo>` prints the demo's description and parameters (ranges, units, which
    parameters each macro drives) as JSON.
-2. Claude Opus 5.5 proposes a value for every parameter. A JSON schema built from the layout
-   constrains the reply (structured outputs), and out-of-range values are clamped and reported back.
+2. The model proposes a value for every parameter. A JSON schema built from the layout constrains the
+   reply, and out-of-range values are clamped and reported back.
 3. `tonic2_render <demo> out.wav --set "name=value,..." --features` renders the values and measures
    level, spectral centroid and rolloff, flatness, band balance, attack, sustain and tail
    (`include/tonic/analysis/features.hpp`). The model can't hear, so these numbers are its feedback.
-4. Claude revises or reports done, for up to `--rounds` rounds.
+4. The model revises or reports done, for up to `--rounds` rounds.
+
+The model sits behind a small interface (`backends.py`: `start(system, schema)`, `ask(text) -> dict`):
+
+| `--backend` | Runs on | Needs |
+|-|-|-|
+| `anthropic` | Claude Opus 5.5 via the Messages API (structured outputs, refusal fallback) | API credits; `pip install -r requirements.txt`; `ANTHROPIC_API_KEY` or `ant auth login` |
+| `claude-code` | Claude via the Claude Code CLI in headless mode (`claude -p --json-schema`, no tools) | the `claude` CLI, logged in; billed to its subscription |
+| `openai` | any OpenAI-style `/chat/completions` server: Ollama (default URL), llama.cpp, LM Studio, vLLM | a local server and model; nothing else |
 
 ```bash
-pip install -r tools/patch_agent/requirements.txt   # the anthropic SDK
-export ANTHROPIC_API_KEY=...                         # or `ant auth login`
-python tools/patch_agent/patch_agent.py "warm evolving pad with a slow attack" --demo poly --out pad
-# -> pad.json ({"params": {...}} like tonic2_match), pad.wav, pad_rounds/ (every render)
+python tools/patch_agent/patch_agent.py "warm evolving pad with a slow attack" --demo poly --backend openai --model qwen3:4b --out pad
+python tools/patch_agent/patch_agent.py "squelchy acid bass" --demo mono --backend claude-code --effort high
+# -> PREFIX.json ({"params": {...}} like tonic2_match), PREFIX.wav, PREFIX_rounds/ (every render)
 ```
 
-Server-side refusal fallback is enabled (`fallbacks="default"`); effort defaults to `medium`
-(`--effort` to change it). `test_patch_agent.py` runs the loop with a scripted fake client, against a
-fake renderer and against real `tonic2_render` output, so ctest needs neither the SDK nor network access.
+Local thinking models: the `openai` backend sends `reasoning_effort: "none"` by default. `qwen3:4b`
+took over 10 minutes per reply with thinking on and about 30 s per round without it
+(`--local-reasoning` to change, `omit` for servers that reject the field). A 4B model follows the
+schema but reasons poorly about sound; the Claude backends are expected to do much better.
+`test_patch_agent.py` covers all three backends with fakes (scripted SDK client, fake CLI, local HTTP
+server) and runs the loop against real `tonic2_render` output, so ctest needs neither network nor SDK.

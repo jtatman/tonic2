@@ -4,8 +4,11 @@ Set TONIC2_RENDER to a tonic2_render binary to also run the loop against real re
 """
 from __future__ import annotations
 
+import http.server
 import json
 import os
+import subprocess
+import threading
 import sys
 import tempfile
 import unittest
@@ -13,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import backends as bk  # noqa: E402
 import patch_agent as pa  # noqa: E402
 
 LAYOUT = {
@@ -82,7 +86,7 @@ class LoopTests(unittest.TestCase):
     def run_agent(self, client, renderer=None, rounds=4):
         renderer = renderer or FakeRenderer()
         with tempfile.TemporaryDirectory() as d:
-            result = pa.run_agent("bright lead", "fake", renderer, client, Path(d), rounds=rounds, log=quiet)
+            result = pa.run_agent("bright lead", "fake", renderer, pa.AnthropicBackend(client=client), Path(d), rounds=rounds, log=quiet)
         return result, renderer
 
     def test_revises_until_done(self):
@@ -134,6 +138,125 @@ class LoopTests(unittest.TestCase):
                 self.run_agent(FakeClient([bad]))
 
 
+class ParseJsonTests(unittest.TestCase):
+    def test_tolerates_think_blocks_fences_and_chatter(self):
+        self.assertEqual(bk.parse_json_text('{"a": 1}'), {"a": 1})
+        self.assertEqual(bk.parse_json_text('<think>hmm {"x": 0}</think>\n```json\n{"a": 2}\n```'), {"a": 2})
+        self.assertEqual(bk.parse_json_text('Here you go: {"a": {"b": 3}} hope that helps'), {"a": {"b": 3}})
+
+    def test_rejects_non_objects(self):
+        for bad in ("no json here", "[1, 2]", "{broken"):
+            with self.assertRaises(bk.AgentError):
+                bk.parse_json_text(bad)
+
+
+class FakeCli:
+    """Stands in for subprocess.run on the claude CLI; replies with scripted result objects."""
+
+    def __init__(self, outputs):
+        self.outputs, self.calls = list(outputs), []
+
+    def __call__(self, cmd, **kwargs):
+        self.calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(self.outputs.pop(0)), stderr="")
+
+
+class ClaudeCodeBackendTests(unittest.TestCase):
+    def test_conversation_and_flags(self):
+        cli = FakeCli([
+            {"type": "result", "is_error": False, "result": "", "session_id": "s1",
+             "structured_output": {"params": {"cutoff": 2000, "level": -6}, "rationale": "a", "done": False}},
+            {"type": "result", "is_error": False, "session_id": "s1",
+             "result": '```json\n{"params": {"cutoff": 3000, "level": -6}, "rationale": "b", "done": true}\n```'},
+        ])
+        backend = bk.ClaudeCodeBackend(binary="claude", effort="xhigh", runner=cli)
+        with tempfile.TemporaryDirectory() as d:
+            result = pa.run_agent("bright", "fake", FakeRenderer(), backend, Path(d), log=quiet)
+        self.assertEqual([r.values["cutoff"] for r in result.rounds], [2000.0, 3000.0])
+        first, second = cli.calls[0][0], cli.calls[1][0]
+        self.assertEqual(first[:4], ["claude", "-p", "--output-format", "json"])
+        self.assertEqual(json.loads(first[first.index("--json-schema") + 1])["required"], ["params", "rationale", "done"])
+        self.assertEqual(first[first.index("--tools") + 1], "")
+        self.assertEqual(first[first.index("--effort") + 1], "high")  # the CLI has no xhigh
+        self.assertNotIn("--resume", first)
+        self.assertEqual(second[second.index("--resume") + 1], "s1")
+        self.assertIn("Sound to make: bright", cli.calls[0][1]["input"])
+        self.assertIn("Measurements of your values", cli.calls[1][1]["input"])
+
+    def test_errors(self):
+        revoked = {"type": "result", "is_error": True, "api_error_status": 401, "result": "OAuth access token has been revoked."}
+        with self.assertRaisesRegex(bk.AgentError, "log in again"):
+            b = bk.ClaudeCodeBackend(runner=FakeCli([revoked]))
+            b.start("s", {})
+            b.ask("hi")
+
+        def missing(cmd, **kwargs):
+            raise FileNotFoundError(cmd[0])
+        with self.assertRaisesRegex(bk.AgentError, "not found"):
+            b = bk.ClaudeCodeBackend(binary="nope", runner=missing)
+            b.start("s", {})
+            b.ask("hi")
+
+
+class FakeOpenAIServer:
+    """A local /v1/chat/completions endpoint that replies with scripted message contents."""
+
+    def __init__(self, contents):
+        self.contents, self.requests = list(contents), []
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                outer.requests.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+                body = json.dumps({"choices": [{"message": {"role": "assistant", "content": outer.contents.pop(0)},
+                                                "finish_reason": "stop"}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class OpenAICompatBackendTests(unittest.TestCase):
+    def test_conversation_over_http(self):
+        server = FakeOpenAIServer([
+            '<think>dark first</think>{"params": {"cutoff": 500, "level": -6}, "rationale": "a", "done": false}',
+            '{"params": {"cutoff": 4000, "level": -6}, "rationale": "b", "done": true}',
+        ])
+        try:
+            backend = bk.OpenAICompatBackend(base_url=server.url, model="tiny")
+            with tempfile.TemporaryDirectory() as d:
+                result = pa.run_agent("bright", "fake", FakeRenderer(), backend, Path(d), log=quiet)
+        finally:
+            server.close()
+        self.assertEqual([r.values["cutoff"] for r in result.rounds], [500.0, 4000.0])
+        path, req = server.requests[1]
+        self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(req["model"], "tiny")
+        self.assertEqual(req["response_format"]["type"], "json_schema")
+        self.assertEqual(req["response_format"]["json_schema"]["schema"]["required"], ["params", "rationale", "done"])
+        self.assertEqual([m["role"] for m in req["messages"]], ["system", "user", "assistant", "user"])
+        self.assertEqual(req["reasoning_effort"], "none")
+        self.assertEqual(req["max_tokens"], 4096)
+
+    def test_unreachable_server(self):
+        backend = bk.OpenAICompatBackend(base_url="http://127.0.0.1:9/v1", timeout=2)
+        backend.start("s", {})
+        with self.assertRaisesRegex(bk.AgentError, "could not reach"):
+            backend.ask("hi")
+
+
 @unittest.skipUnless(os.environ.get("TONIC2_RENDER"), "TONIC2_RENDER not set")
 class RealRendererTests(unittest.TestCase):
     def test_loop_with_real_renders(self):
@@ -148,7 +271,7 @@ class RealRendererTests(unittest.TestCase):
             reply({"params": bright, "rationale": "bright", "done": True}),
         ])
         with tempfile.TemporaryDirectory() as d:
-            result = pa.run_agent("bright pluck", "poly", renderer, client, Path(d), log=quiet)
+            result = pa.run_agent("bright pluck", "poly", renderer, pa.AnthropicBackend(client=client), Path(d), log=quiet)
             self.assertTrue((Path(d) / "round2.wav").is_file())
         self.assertGreater(result.rounds[1].features["centroid_hz"], 1.5 * result.rounds[0].features["centroid_hz"])
 
